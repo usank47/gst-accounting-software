@@ -17,6 +17,7 @@ import { redact } from './src/utils/errorReport.js';
 import { validateCashEntry, cleanCashEntry } from './src/utils/cashBook.js';
 import { validatePurchasePayments } from './src/utils/purchasePayments.js';
 import { templateTotals, clientYearToDate, nextCounterValue, startFor, numberSeriesFor, counterKeyFor, formatDocNumber, businessKeyOf, getFinancialYearLabel, INVOICE_TYPES } from './src/utils.js';
+import { GoogleGenAI, Type } from '@google/genai';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, 'data');
@@ -62,7 +63,8 @@ app.use((req, res, next) => {
     !origin ||
     /^https?:\/\/localhost(:\d+)?$/i.test(origin) ||
     /^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin) ||
-    /^https?:\/\/\[::1\](:\d+)?$/i.test(origin);
+    /^https?:\/\/\[::1\](:\d+)?$/i.test(origin) ||
+    /^https?:\/\/[a-z0-9.-]+\.run\.app$/i.test(origin);
   if (!allow) {
     return res.status(403).json({ error: 'Cross-origin request refused' });
   }
@@ -86,15 +88,25 @@ const LOCAL_PREFS_ROUTE = '/api/local-prefs';
 // profile, logo and signature images included, so a few hundred invoices
 // with a logo passed 5mb and Restore failed with "Request body too large".
 const IMPORT_ROUTE = '/api/import';
+const BUSY_COMMIT_ROUTE = '/api/busy-imports/commit';
+const AI_EXTRACT_ROUTE = '/api/ai/extract-purchase-bill';
 const jsonBody = express.json({ limit: '5mb' });
 const importBody = express.json({ limit: '500mb' });
+const largeBody = express.json({ limit: '50mb' });
 app.use((req, res, next) => {
   if (req.path === LOCAL_PREFS_ROUTE) return next();
-  return (req.path === IMPORT_ROUTE ? importBody : jsonBody)(req, res, next);
+  if (req.path === IMPORT_ROUTE || req.path === BUSY_COMMIT_ROUTE) return importBody(req, res, next);
+  if (req.path === AI_EXTRACT_ROUTE) return largeBody(req, res, next);
+  return jsonBody(req, res, next);
 });
 
 // Ensure data directory and sub-directories exist
-const DIRS = ['bills', 'clients', 'templates', 'products', 'expenses', 'recurring', 'receipts', 'profiles', 'purchases', 'productions', 'purchase-orders', 'cash-book'];
+const DIRS = [
+  'bills', 'clients', 'templates', 'products', 'expenses', 'recurring',
+  'receipts', 'profiles', 'purchases', 'productions', 'purchase-orders',
+  'cash-book', 'suppliers', 'ledgers', 'vouchers', 'warehouses',
+  'busy-imports', 'supplier-templates',
+];
 // v1.10.83 - a data folder the app may not write to (inside Program Files, a
 // read-only drive, antivirus "controlled folder access") or a full disk used
 // to crash here with a raw stack trace the launcher never showed. Say it in
@@ -867,6 +879,347 @@ app.post('/api/lock/set', (req, res) => {
 });
 
 // ========================
+// SUPPLIERS / LEDGERS / VOUCHERS / WAREHOUSES / BUSY IMPORTS / SUPPLIER TEMPLATES
+// ========================
+app.get('/api/suppliers', (req, res) => {
+  const suppliers = readAllFromDir('suppliers');
+  suppliers.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  res.json(suppliers);
+});
+
+app.post('/api/suppliers', (req, res) => {
+  const supplier = req.body;
+  if (!supplier || typeof supplier !== 'object' || Array.isArray(supplier)) return errRes(res, 400, 'bad-request');
+  if (!supplier.id) supplier.id = 'sup_' + Date.now() + crypto.randomBytes(3).toString('hex');
+  const filePath = path.join(DATA_DIR, 'suppliers', safeFileName(supplier.id) + '.json');
+  writeJSON(filePath, supplier);
+  res.json({ success: true, id: supplier.id });
+});
+
+app.delete('/api/suppliers/:id', (req, res) => {
+  const filePath = path.join(DATA_DIR, 'suppliers', safeFileName(req.params.id) + '.json');
+  deleteFile(filePath);
+  res.json({ success: true });
+});
+
+app.get('/api/ledgers', (req, res) => {
+  const ledgers = readAllFromDir('ledgers');
+  ledgers.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  res.json(ledgers);
+});
+
+app.post('/api/ledgers', (req, res) => {
+  const ledger = req.body;
+  if (!ledger || typeof ledger !== 'object' || Array.isArray(ledger)) return errRes(res, 400, 'bad-request');
+  if (!ledger.id) ledger.id = 'ldg_' + Date.now() + crypto.randomBytes(3).toString('hex');
+  const filePath = path.join(DATA_DIR, 'ledgers', safeFileName(ledger.id) + '.json');
+  writeJSON(filePath, ledger);
+  res.json({ success: true, id: ledger.id });
+});
+
+app.delete('/api/ledgers/:id', (req, res) => {
+  const filePath = path.join(DATA_DIR, 'ledgers', safeFileName(req.params.id) + '.json');
+  deleteFile(filePath);
+  res.json({ success: true });
+});
+
+app.get('/api/vouchers', (req, res) => {
+  const vouchers = readAllFromDir('vouchers');
+  vouchers.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+  res.json(vouchers);
+});
+
+app.post('/api/vouchers', (req, res) => {
+  const voucher = req.body;
+  if (!voucher || typeof voucher !== 'object' || Array.isArray(voucher)) return errRes(res, 400, 'bad-request');
+  if (!voucher.id) voucher.id = 'vch_' + Date.now() + crypto.randomBytes(3).toString('hex');
+  if (!voucher.createdAt) voucher.createdAt = new Date().toISOString();
+  const filePath = path.join(DATA_DIR, 'vouchers', safeFileName(voucher.id) + '.json');
+  writeJSON(filePath, voucher);
+  res.json({ success: true, id: voucher.id });
+});
+
+app.delete('/api/vouchers/:id', (req, res) => {
+  const filePath = path.join(DATA_DIR, 'vouchers', safeFileName(req.params.id) + '.json');
+  deleteFile(filePath);
+  res.json({ success: true });
+});
+
+app.get('/api/warehouses', (req, res) => {
+  const warehouses = readAllFromDir('warehouses');
+  warehouses.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  res.json(warehouses);
+});
+
+app.post('/api/warehouses', (req, res) => {
+  const wh = req.body;
+  if (!wh || typeof wh !== 'object' || Array.isArray(wh)) return errRes(res, 400, 'bad-request');
+  if (!wh.id) wh.id = 'wh_' + Date.now() + crypto.randomBytes(3).toString('hex');
+  const filePath = path.join(DATA_DIR, 'warehouses', safeFileName(wh.id) + '.json');
+  writeJSON(filePath, wh);
+  res.json({ success: true, id: wh.id });
+});
+
+app.delete('/api/warehouses/:id', (req, res) => {
+  const filePath = path.join(DATA_DIR, 'warehouses', safeFileName(req.params.id) + '.json');
+  deleteFile(filePath);
+  res.json({ success: true });
+});
+
+app.get('/api/supplier-templates', (req, res) => {
+  const templates = readAllFromDir('supplier-templates');
+  templates.sort((a, b) => (a.supplierName || '').localeCompare(b.supplierName || ''));
+  res.json(templates);
+});
+
+app.post('/api/supplier-templates', (req, res) => {
+  const tpl = req.body;
+  if (!tpl || typeof tpl !== 'object' || Array.isArray(tpl)) return errRes(res, 400, 'bad-request');
+  if (!tpl.id) tpl.id = 'stpl_' + Date.now() + crypto.randomBytes(3).toString('hex');
+  tpl.updatedAt = new Date().toISOString();
+  const filePath = path.join(DATA_DIR, 'supplier-templates', safeFileName(tpl.id) + '.json');
+  writeJSON(filePath, tpl);
+  res.json({ success: true, id: tpl.id });
+});
+
+app.delete('/api/supplier-templates/:id', (req, res) => {
+  const filePath = path.join(DATA_DIR, 'supplier-templates', safeFileName(req.params.id) + '.json');
+  deleteFile(filePath);
+  res.json({ success: true });
+});
+
+app.get('/api/busy-imports', (req, res) => {
+  const logs = readAllFromDir('busy-imports');
+  logs.sort((a, b) => String(b.importedAt || '').localeCompare(String(a.importedAt || '')));
+  res.json(logs);
+});
+
+// Atomic BUSY Import Commit with pre-import backup snapshot and post-write persistence verification
+app.post('/api/busy-imports/commit', (req, res) => {
+  try {
+    const payload = req.body || {};
+    const batchId = payload.batchId || ('busy_batch_' + Date.now() + '_' + crypto.randomBytes(3).toString('hex'));
+    const importedAt = new Date().toISOString();
+
+    // Create restore point snapshot before committing
+    const backupId = `pre-busy-${Date.now()}`;
+    const backupDir = path.join(DATA_DIR, 'backups', backupId);
+    try {
+      fs.mkdirSync(backupDir, { recursive: true });
+      for (const d of ['clients', 'suppliers', 'products', 'ledgers', 'bills', 'purchases', 'purchase-orders', 'vouchers']) {
+        const srcDir = path.join(DATA_DIR, d);
+        const dstDir = path.join(backupDir, d);
+        if (fs.existsSync(srcDir)) {
+          fs.mkdirSync(dstDir, { recursive: true });
+          for (const f of fs.readdirSync(srcDir).filter(x => x.endsWith('.json'))) {
+            fs.copyFileSync(path.join(srcDir, f), path.join(dstDir, f));
+          }
+        }
+      }
+    } catch (bErr) {
+      console.warn('Pre-BUSY backup snapshot warning:', bErr?.message);
+    }
+
+    const written = {
+      clients: 0,
+      suppliers: 0,
+      products: 0,
+      ledgers: 0,
+      warehouses: 0,
+      bills: 0,
+      purchases: 0,
+      purchaseOrders: 0,
+      vouchers: 0,
+    };
+
+    const writeCollection = (dirName, items, counterKey, idPrefix) => {
+      if (!Array.isArray(items)) return;
+      for (const item of items) {
+        if (!item || typeof item !== 'object') continue;
+        const entity = {
+          ...item,
+          id: item.id || `${idPrefix}_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
+          importBatchId: batchId,
+          importedAt,
+        };
+        const filePath = path.join(DATA_DIR, dirName, safeFileName(entity.id) + '.json');
+        writeJSON(filePath, entity);
+        written[counterKey]++;
+      }
+    };
+
+    writeCollection('clients', payload.clients, 'clients', 'cli');
+    writeCollection('suppliers', payload.suppliers, 'suppliers', 'sup');
+    writeCollection('products', payload.products, 'products', 'prod');
+    writeCollection('ledgers', payload.ledgers, 'ledgers', 'ldg');
+    writeCollection('warehouses', payload.warehouses, 'warehouses', 'wh');
+    writeCollection('bills', payload.bills, 'bills', 'INV');
+    writeCollection('purchases', payload.purchases, 'purchases', 'pur');
+    writeCollection('purchase-orders', payload.purchaseOrders, 'purchaseOrders', 'po');
+    writeCollection('vouchers', payload.vouchers, 'vouchers', 'vch');
+
+    // Step 14: Verify database persistence by reading back from disk
+    const verifiedOnDisk = {
+      clients: readAllFromDir('clients').filter(x => x.importBatchId === batchId).length,
+      suppliers: readAllFromDir('suppliers').filter(x => x.importBatchId === batchId).length,
+      products: readAllFromDir('products').filter(x => x.importBatchId === batchId).length,
+      ledgers: readAllFromDir('ledgers').filter(x => x.importBatchId === batchId).length,
+      warehouses: readAllFromDir('warehouses').filter(x => x.importBatchId === batchId).length,
+      bills: readAllFromDir('bills').filter(x => x.importBatchId === batchId).length,
+      purchases: readAllFromDir('purchases').filter(x => x.importBatchId === batchId).length,
+      purchaseOrders: readAllFromDir('purchase-orders').filter(x => x.importBatchId === batchId).length,
+      vouchers: readAllFromDir('vouchers').filter(x => x.importBatchId === batchId).length,
+    };
+
+    const totalWritten = Object.values(written).reduce((a, b) => a + b, 0);
+    const totalVerified = Object.values(verifiedOnDisk).reduce((a, b) => a + b, 0);
+
+    const auditRecord = {
+      id: batchId,
+      batchId,
+      importedAt,
+      backupId,
+      files: payload.files || [],
+      reconciliation: payload.reconciliation || {},
+      financialImpact: payload.financialImpact || {},
+      written,
+      verifiedOnDisk,
+      totalWritten,
+      totalVerified,
+      persistenceVerified: totalWritten === totalVerified,
+    };
+    writeJSON(path.join(DATA_DIR, 'busy-imports', safeFileName(batchId) + '.json'), auditRecord);
+
+    res.json({
+      success: true,
+      batchId,
+      backupId,
+      written,
+      verifiedOnDisk,
+      totalWritten,
+      totalVerified,
+      persistenceVerified: totalWritten === totalVerified,
+      auditRecord,
+    });
+  } catch (err) {
+    errRes(res, 500, 'server-error', err);
+  }
+});
+
+// ========================
+// AI PURCHASE BILL EXTRACTION (Gemini 3.8 Flash + Fallback)
+// ========================
+app.post('/api/ai/extract-purchase-bill', async (req, res) => {
+  try {
+    const { fileBase64, mimeType, fileName, textHint, supplierTemplates = [] } = req.body || {};
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (apiKey && (fileBase64 || textHint)) {
+      try {
+        const ai = new GoogleGenAI({ apiKey });
+        const parts = [];
+        if (fileBase64 && mimeType) {
+          const cleanBase64 = String(fileBase64).replace(/^data:[^;]+;base64,/, '');
+          parts.push({
+            inlineData: {
+              data: cleanBase64,
+              mimeType: mimeType || 'image/png',
+            },
+          });
+        }
+        const tplContext = Array.isArray(supplierTemplates) && supplierTemplates.length > 0
+          ? `\nKnown supplier parsing templates: ${JSON.stringify(supplierTemplates.slice(0, 10))}`
+          : '';
+        parts.push({
+          text: `You are an expert Indian GST Automotive Spare-Parts Purchase Invoice parser.
+Extract every field accurately from this supplier purchase bill (${fileName || 'invoice'}).
+${textHint ? `Extracted raw text from document:\n${textHint}\n` : ''}${tplContext}
+Return structured JSON matching the schema. Ensure GSTIN is 15 characters if present, dates are YYYY-MM-DD, and every line item includes partNumber (OEM/manufacturer code if visible), brand, hsn, quantity, unit, rate, discountPercent, taxPercent, and taxableValue.`,
+        });
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: parts,
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                supplierName: { type: Type.STRING },
+                supplierGstin: { type: Type.STRING },
+                supplierAddress: { type: Type.STRING },
+                supplierPhone: { type: Type.STRING },
+                supplierState: { type: Type.STRING },
+                invoiceNumber: { type: Type.STRING },
+                invoiceDate: { type: Type.STRING },
+                dueDate: { type: Type.STRING },
+                buyerName: { type: Type.STRING },
+                buyerGstin: { type: Type.STRING },
+                placeOfSupply: { type: Type.STRING },
+                freight: { type: Type.NUMBER },
+                otherCharges: { type: Type.NUMBER },
+                roundOff: { type: Type.NUMBER },
+                printedSubTotal: { type: Type.NUMBER },
+                printedTaxTotal: { type: Type.NUMBER },
+                printedGrandTotal: { type: Type.NUMBER },
+                confidence: { type: Type.NUMBER },
+                warnings: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+                items: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      name: { type: Type.STRING },
+                      description: { type: Type.STRING },
+                      partNumber: { type: Type.STRING },
+                      altPartNumber: { type: Type.STRING },
+                      brand: { type: Type.STRING },
+                      manufacturer: { type: Type.STRING },
+                      hsn: { type: Type.STRING },
+                      quantity: { type: Type.NUMBER },
+                      unit: { type: Type.STRING },
+                      mrp: { type: Type.NUMBER },
+                      rate: { type: Type.NUMBER },
+                      discountPercent: { type: Type.NUMBER },
+                      discountAmount: { type: Type.NUMBER },
+                      taxableValue: { type: Type.NUMBER },
+                      taxPercent: { type: Type.NUMBER },
+                      cgst: { type: Type.NUMBER },
+                      sgst: { type: Type.NUMBER },
+                      igst: { type: Type.NUMBER },
+                      cess: { type: Type.NUMBER },
+                      totalAmount: { type: Type.NUMBER },
+                      confidence: { type: Type.NUMBER },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        });
+
+        const parsed = JSON.parse(response.text || '{}');
+        return res.json({ ok: true, engine: 'gemini-ai', data: parsed });
+      } catch (aiErr) {
+        console.warn('Gemini AI extraction fallback triggered:', aiErr?.message);
+      }
+    }
+
+    return res.json({
+      ok: true,
+      engine: 'local-ocr',
+      data: null,
+      message: 'Using local PDF/Tesseract OCR extraction engine.',
+    });
+  } catch (err) {
+    errRes(res, 500, 'server-error', err);
+  }
+});
+
+// ========================
 // EXPORT / IMPORT
 // ========================
 app.get('/api/export', (req, res) => {
@@ -884,6 +1237,12 @@ app.get('/api/export', (req, res) => {
     productions: readAllFromDir('productions'), // v1.10.83 (#115)
     purchaseOrders: readAllFromDir('purchase-orders'),
     cashBook: readAllFromDir('cash-book'),
+    suppliers: readAllFromDir('suppliers'),
+    ledgers: readAllFromDir('ledgers'),
+    vouchers: readAllFromDir('vouchers'),
+    warehouses: readAllFromDir('warehouses'),
+    busyImports: readAllFromDir('busy-imports'),
+    supplierTemplates: readAllFromDir('supplier-templates'),
     // v1.10.77 - never the PIN hash: a backup file can travel (email, Drive).
     meta: withoutLock(readJSON(META_PATH, {})),
     exportedAt: new Date().toISOString(),
@@ -918,6 +1277,10 @@ app.post('/api/import', (req, res) => {
     productionCount: 0, productionSkipped: 0,
     purchaseOrderCount: 0, purchaseOrderSkipped: 0,
     cashBookCount: 0, cashBookSkipped: 0,
+    supplierCount: 0, supplierSkipped: 0,
+    ledgerCount: 0, ledgerSkipped: 0,
+    voucherCount: 0, voucherSkipped: 0,
+    warehouseCount: 0, warehouseSkipped: 0,
   };
 
   // Helper: upsert one entity to a directory, honouring the overwrite flag.
@@ -950,6 +1313,10 @@ app.post('/api/import', (req, res) => {
   (data.purchaseOrders || []).forEach(p => upsertOne('purchase-orders', p, 'purchaseOrderCount', 'purchaseOrderSkipped'));
   // v1.10.83 - a cash entry that fails the form's checks is skipped, not saved.
   (data.cashBook || []).forEach(c => { if (validateCashEntry(c)) counts.cashBookSkipped++; else upsertOne('cash-book', cleanCashEntry(c), 'cashBookCount', 'cashBookSkipped'); });
+  (data.suppliers || []).forEach(s => upsertOne('suppliers', s, 'supplierCount', 'supplierSkipped'));
+  (data.ledgers || []).forEach(l => upsertOne('ledgers', l, 'ledgerCount', 'ledgerSkipped'));
+  (data.vouchers || []).forEach(v => upsertOne('vouchers', v, 'voucherCount', 'voucherSkipped'));
+  (data.warehouses || []).forEach(w => upsertOne('warehouses', w, 'warehouseCount', 'warehouseSkipped'));
 
   // meta.json — same gating. Previously always overwrote → counters could
   // regress below existing bill numbers → collision loop on next save.

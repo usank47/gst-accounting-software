@@ -73,3 +73,38 @@ export function buildXlsx(rows, sheetName = 'Sheet1') {
   for (const [k, v] of Object.entries(files)) zipped[k] = strToU8(v);
   return zipSync(zipped, { level: 6 });
 }
+
+export function writeXlsxFile(filename, headers, rows, sheetName = 'Sheet1') {
+  const allRows = headers ? [headers, ...(rows || [])] : (rows || []);
+  const u8 = buildXlsx(allRows, sheetName);
+  const blob = new Blob([u8], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || 'export.xlsx';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export async function readXlsxRows(file) {
+  // Simple CSV / text reader fallback if not using heavy excel library
+  const text = await file.text();
+  const lines = text.split(/\r?\n/).filter(Boolean);
+  return lines.map(line => {
+    const cells = [];
+    let cur = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') inQuotes = !inQuotes;
+      else if (c === ',' && !inQuotes) {
+        cells.push(cur.trim());
+        cur = '';
+      } else {
+        cur += c;
+      }
+    }
+    cells.push(cur.trim());
+    return cells;
+  });
+}

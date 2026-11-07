@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
-import { Home, FileText, Settings, Plus, Users, Package, BarChart3, Wallet, RefreshCw, Receipt, BookOpen, Moon, Sun, Download, X, ShoppingCart, ChevronDown, Building2, Pencil, HelpCircle, Search, Command, Bell, Calculator, HardDrive, Menu, Heart, Banknote } from 'lucide-react';
+import { Home, FileText, Settings, Plus, Users, Package, BarChart3, Wallet, RefreshCw, Receipt, BookOpen, Moon, Sun, Download, X, ShoppingCart, ChevronDown, Building2, Pencil, HelpCircle, Search, Command, Bell, Calculator, HardDrive, Menu, Heart, Banknote, Laptop, Landmark, FileSpreadsheet } from 'lucide-react';
 import { getAllProfiles, saveProfile, getEnabledModules, getMenuOrder, onMenuChanged, getAllBills, getAllProducts, getStockAlertSettings, getAllClients, runUpdateNow, getLockStatus } from './store';
 import { isModuleEnabled, getUpcomingFilings, countsAsSales, localToday, toLocalIsoDate, DOCS_URL, findLowStock, trackedStock } from './utils';
 import { orderedMenu } from './utils/businessTypes';
@@ -37,6 +37,9 @@ const IncomeTax = lazy(() => import('./components/IncomeTax'));
 const PurchaseBills = lazy(() => import('./components/PurchaseBills'));
 const ControlPanel = lazy(() => import('./components/ControlPanel'));
 const SupportView = lazy(() => import('./components/SupportView'));
+const POSView = lazy(() => import('./components/POSView'));
+const AccountingView = lazy(() => import('./components/AccountingView'));
+const BusyImportModal = lazy(() => import('./components/BusyImportModal'));
 import StarBanner from './components/StarBanner';
 import AppFooter from './components/AppFooter';
 import LockButton from './components/LockButton';
@@ -80,7 +83,7 @@ function App() {
       const params = new URLSearchParams(window.location.search);
       const v = params.get('view');
       // v1.10.74 - 'controlpanel' added so ?view=controlpanel deep links work too.
-      const valid = ['dashboard', 'new', 'clients', 'inventory', 'expenses', 'purchases', 'recurring', 'receipts', 'cashbook', 'reports', 'filing', 'incometax', 'settings', 'controlpanel', 'support'];
+      const valid = ['dashboard', 'new', 'pos', 'clients', 'inventory', 'accounting', 'expenses', 'purchases', 'recurring', 'receipts', 'cashbook', 'reports', 'filing', 'incometax', 'settings', 'controlpanel', 'support'];
       if (v && valid.includes(v)) {
         // Strip the query string so a refresh doesn't keep snapping back to
         // the shortcut target — only the *first* navigation honours it.
@@ -92,6 +95,7 @@ function App() {
     const last = sessionStorage.getItem('gst_currentView');
     return last && last !== 'guide' ? last : 'dashboard';
   });
+  const [showBusyModal, setShowBusyModal] = useState(false);
   const [profile, setProfile] = useState(null);
   // v1.10.83 - the menu's own name and logo, as last shown (see `brand` below).
   const [menuBrandCache] = useState(() => {
@@ -510,7 +514,7 @@ function App() {
   // If the user just disabled the module backing the current view, kick them to dashboard
   // so they don't land on an empty page after toggling.
   useEffect(() => {
-    const map = { new: 'invoicing', clients: 'clients', inventory: 'inventory', expenses: 'expenses', purchases: 'purchases', recurring: 'recurring', receipts: 'receipts', cashbook: 'cashBook', reports: 'reports', filing: 'gstReturns', incometax: 'incomeTax' };
+    const map = { new: 'invoicing', pos: 'pos', clients: 'clients', inventory: 'inventory', accounting: 'accounting', expenses: 'expenses', purchases: 'purchases', recurring: 'recurring', receipts: 'receipts', cashbook: 'cashBook', reports: 'reports', filing: 'gstReturns', incometax: 'incomeTax' };
     const moduleForView = map[currentView];
     if (moduleForView && !isModuleEnabled(moduleForView, enabledModules)) {
       setCurrentView('dashboard');
@@ -523,8 +527,10 @@ function App() {
   const NAV_EXTRAS = {
     dashboard: { icon: Home, label: 'Dashboard' },
     new: { icon: Plus, label: 'New Invoice', onClick: handleNewInvoice },
+    pos: { icon: Laptop, label: 'POS Counter' },
     clients: { icon: Users, label: 'Clients' },
     inventory: { icon: Package, label: 'Products' },
+    accounting: { icon: Landmark, label: 'Accounting & Ledgers' },
     expenses: { icon: Wallet, label: 'Expenses' },
     purchases: { icon: ShoppingCart, label: 'Purchases' },
     recurring: { icon: RefreshCw, label: 'Recurring' },
@@ -669,14 +675,77 @@ function App() {
     !paletteQuery.trim() || a.label.toLowerCase().includes(paletteQuery.toLowerCase())
   );
 
-  // Global keyboard shortcuts. Lives down here for the same TDZ reason —
-  // the handler closes over `handleNewInvoice` which is declared above only.
+  // Global keyboard shortcuts including standard Accounting / Billing F-keys (F1–F12).
   useEffect(() => {
     const onKey = (e) => {
-      const mod = e.ctrlKey || e.metaKey;
-      if (!mod) return;
       const tag = (e.target?.tagName || '').toLowerCase();
       const editable = tag === 'input' || tag === 'textarea' || e.target?.isContentEditable;
+
+      // Function keys F1-F12
+      if (e.key === 'F1') {
+        e.preventDefault();
+        setShowShortcutsHelp(s => !s);
+        return;
+      }
+      if (e.key === 'F2') {
+        e.preventDefault();
+        handleNewInvoice();
+        return;
+      }
+      if (e.key === 'F3') {
+        e.preventDefault();
+        setCurrentView('purchases');
+        return;
+      }
+      if (e.key === 'F4') {
+        e.preventDefault();
+        setCurrentView('clients');
+        return;
+      }
+      if (e.key === 'F5') {
+        e.preventDefault();
+        setCurrentView('inventory');
+        return;
+      }
+      if (e.key === 'F6') {
+        e.preventDefault();
+        setCurrentView('accounting');
+        return;
+      }
+      if (e.key === 'F7') {
+        e.preventDefault();
+        setCurrentView('accounting');
+        return;
+      }
+      if (e.key === 'F8') {
+        e.preventDefault();
+        setCurrentView('accounting');
+        return;
+      }
+      if (e.key === 'F9') {
+        e.preventDefault();
+        setCurrentView('accounting');
+        return;
+      }
+      if (e.key === 'F10') {
+        e.preventDefault();
+        setCurrentView('pos');
+        return;
+      }
+      if (e.key === 'F11') {
+        e.preventDefault();
+        setCurrentView('dashboard');
+        return;
+      }
+      if (e.key === 'F12') {
+        e.preventDefault();
+        window.print();
+        return;
+      }
+
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+
       if (e.key === 'k' || e.key === 'K') {
         e.preventDefault();
         setShowPalette(p => !p);
@@ -692,12 +761,15 @@ function App() {
       } else if ((e.key === 'n' || e.key === 'N') && !editable) {
         e.preventDefault();
         handleNewInvoice();
+      } else if ((e.key === 'b' || e.key === 'B') && e.shiftKey) {
+        e.preventDefault();
+        setShowBusyModal(s => !s);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [handleNewInvoice]);
 
   // v1.9.4 — Accessibility hooks (v1.10.4/1.10.6 updated):
   //   1. Mirror `title` → `aria-label` on every icon button that lacks one.
@@ -963,6 +1035,21 @@ function App() {
                 }} />
               </button>
             )}
+            {/* BUSY .DAT Import button */}
+            <button
+              type="button"
+              className="nav-btn"
+              onClick={() => setShowBusyModal(true)}
+              title="Import masters and transactions from BUSY Accounting (.DAT, Excel, CSV, JSON)"
+              style={{
+                background: 'rgba(37, 99, 235, 0.12)',
+                borderColor: 'rgba(37, 99, 235, 0.3)',
+                color: '#93c5fd',
+                fontSize: '0.82rem',
+              }}
+            >
+              <FileSpreadsheet size={16} /> BUSY .DAT Import
+            </button>
             {/* v1.10.83 - in the order chosen in Settings → Features; switched-off
                 ones are already left out of bottomIds. */}
             {bottomIds.map(id => ({
@@ -1009,6 +1096,18 @@ function App() {
 
       <div className="main-content">
         <div className="app-topbar">
+          {sidebarAutoHide && (
+            <button
+              type="button"
+              className="topbar-btn"
+              onClick={() => toggleSidebarAutoHide(false)}
+              title="Show sidebar menu"
+              aria-label="Show sidebar menu"
+              style={{ marginRight: 'auto' }}
+            >
+              <Menu size={18} />
+            </button>
+          )}
           {/* v1.10.83 - the promise, on every screen (it was under the app name in the menu). */}
           <span className="topbar-free" title="Free forever: no paid version, no locked features, no ads, no tracking. Works on this computer, even offline.">Free forever</span>
           {topActions}
@@ -1031,12 +1130,18 @@ function App() {
         {/* v1.10.4 — All lazy views under one Suspense boundary. Only the
              matched view's chunk actually loads; others stay unfetched. */}
         <Suspense fallback={<ViewLoading />}>
+        {currentView === 'pos' && (
+          <POSView key={businessKey} onNewInvoice={handleNewInvoice} />
+        )}
         {currentView === 'clients' && (
           <ClientsView onNew={handleNewInvoice} onEdit={handleEditInvoice} onDuplicate={handleDuplicateInvoice} />
         )}
         {currentView === 'inventory' && (
           // v1.10.83 (#115) - remounted per business, like the screens below, so its production list follows the switch.
-          <InventoryView key={businessKey} />
+          <InventoryView key={businessKey} onOpenBusyImport={() => setShowBusyModal(true)} />
+        )}
+        {currentView === 'accounting' && (
+          <AccountingView key={businessKey} />
         )}
         {/* v1.10.66 (#64 item 1) — `key={businessKey}` remounts these screens
             when the business changes. Each reads the business once when it
@@ -1077,6 +1182,11 @@ function App() {
           <SupportView />
         )}
         </Suspense>
+        {showBusyModal && (
+          <Suspense fallback={<ViewLoading />}>
+            <BusyImportModal onClose={() => setShowBusyModal(false)} />
+          </Suspense>
+        )}
         {/* Version + DiceCodes line: Dashboard only, so it never takes space on working screens. */}
         {currentView === 'dashboard' && <AppFooter onOpenSupport={() => setCurrentView('support')} />}
         </ErrorBoundary>
@@ -1229,12 +1339,27 @@ function App() {
             </div>
             <table className="kv-list">
               <tbody>
+                <tr><td><kbd>F1</kbd></td><td>Help &amp; Shortcuts reference</td></tr>
+                <tr><td><kbd>F2</kbd></td><td>New Sales Tax Invoice</td></tr>
+                <tr><td><kbd>F3</kbd></td><td>Purchase Bills &amp; Inward OCR</td></tr>
+                <tr><td><kbd>F4</kbd></td><td>Clients &amp; Debtors</td></tr>
+                <tr><td><kbd>F5</kbd></td><td>Products &amp; Inventory Master</td></tr>
+                <tr><td><kbd>F6</kbd></td><td>Accounting &amp; Ledgers</td></tr>
+                <tr><td><kbd>F7</kbd></td><td>Payment Voucher (in Accounting)</td></tr>
+                <tr><td><kbd>F8</kbd></td><td>Sales Return / Credit Note</td></tr>
+                <tr><td><kbd>F9</kbd></td><td>Purchase Return / Debit Note</td></tr>
+                <tr><td><kbd>F10</kbd></td><td>POS Fast Counter Billing</td></tr>
+                <tr><td><kbd>F11</kbd></td><td>Dashboard / Overview</td></tr>
+                <tr><td><kbd>F12</kbd></td><td>Print current document</td></tr>
                 <tr><td><kbd>Ctrl</kbd>&nbsp;+&nbsp;<kbd>K</kbd></td><td>Open command palette (jump to any page)</td></tr>
                 <tr><td><kbd>Ctrl</kbd>&nbsp;+&nbsp;<kbd>N</kbd></td><td>New invoice</td></tr>
                 <tr><td><kbd>Ctrl</kbd>&nbsp;+&nbsp;<kbd>S</kbd></td><td>Save current invoice (when on the invoice form)</td></tr>
                 <tr><td><kbd>Ctrl</kbd>&nbsp;+&nbsp;<kbd>P</kbd></td><td>Download PDF (when on the invoice form)</td></tr>
+                <tr><td><kbd>Alt</kbd>&nbsp;+&nbsp;<kbd>A</kbd></td><td>Focus Product Search (in POS Counter)</td></tr>
+                <tr><td><kbd>Alt</kbd>&nbsp;+&nbsp;<kbd>C</kbd></td><td>Select Customer (in POS Counter)</td></tr>
+                <tr><td><kbd>Ctrl</kbd>&nbsp;+&nbsp;<kbd>Enter</kbd></td><td>Complete &amp; Print Sale (in POS Counter)</td></tr>
                 <tr><td><kbd>Ctrl</kbd>&nbsp;+&nbsp;<kbd>Shift</kbd>&nbsp;+&nbsp;<kbd>L</kbd></td><td>Lock the app (when a PIN is set)</td></tr>
-                <tr><td><kbd>Ctrl</kbd>&nbsp;+&nbsp;<kbd>/</kbd></td><td>Toggle this help</td></tr>
+                <tr><td><kbd>Ctrl</kbd>&nbsp;+&nbsp;<kbd>Shift</kbd>&nbsp;+&nbsp;<kbd>B</kbd></td><td>Open BUSY .DAT Import Wizard</td></tr>
                 <tr><td><kbd>Esc</kbd></td><td>Close any open modal</td></tr>
               </tbody>
             </table>

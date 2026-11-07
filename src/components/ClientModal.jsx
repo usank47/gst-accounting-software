@@ -10,6 +10,13 @@ export default function ClientModal({ show, onClose, onSave, client, isEditing, 
   const emptyForm = {
     name: '', address: '', city: '', pin: '', state: '', gstin: '', email: '', phone: '',
     country: fallbackCountry, isSEZ: false,
+    customerType: 'Retail',
+    accountCode: '',
+    creditLimit: 0,
+    creditDays: 15,
+    openingBalance: 0,
+    openingType: 'Dr',
+    vehicleNo: '',
     // v1.9.1 — per-client print preferences. When set, they auto-populate
     // invoiceOptions when the user creates a new invoice for this client.
     // Left blank = use app-wide defaults.
@@ -27,6 +34,13 @@ export default function ClientModal({ show, onClose, onSave, client, isEditing, 
         pin: client.pin || '', state: client.state || '', gstin: client.gstin || '',
         email: client.email || '', phone: client.phone || '', country: client.country || fallbackCountry,
         isSEZ: !!client.isSEZ,
+        customerType: client.customerType || 'Retail',
+        accountCode: client.accountCode || '',
+        creditLimit: client.creditLimit ?? 0,
+        creditDays: client.creditDays ?? 15,
+        openingBalance: client.openingBalance ?? 0,
+        openingType: client.openingType || 'Dr',
+        vehicleNo: client.vehicleNo || '',
         preferredPaperSize: client.preferredPaperSize || '',
         preferredCurrency: client.preferredCurrency || '',
         autoPrint: !!client.autoPrint,
@@ -70,20 +84,37 @@ export default function ClientModal({ show, onClose, onSave, client, isEditing, 
 
   const handleSave = () => {
     if (!form.name.trim()) return;
-    onSave(form);
+    onSave({
+      ...form,
+      creditLimit: Number(form.creditLimit) || 0,
+      creditDays: Number(form.creditDays) || 0,
+      openingBalance: Number(form.openingBalance) || 0,
+    });
   };
 
   return (
     <div className="modal-overlay">
-      <div className="modal-content" style={{ maxWidth: '520px' }}>
+      <div className="modal-content" style={{ maxWidth: '580px' }}>
         <div className="flex justify-between items-center mb-4">
           <h3 className="section-title" style={{ margin: 0 }}>{isEditing ? 'Edit Client' : 'Add New Client'} <HelpButton title="Adding and editing a client" doc="clients#client-form" size={16} /></h3>
           <button type="button" className="icon-btn" onClick={onClose} title="Close"><X size={18} /></button>
         </div>
         <div className="grid grid-cols-2 gap-4">
-          <div className="form-group" style={{ gridColumn: 'span 2' }}>
+          <div className="form-group">
             <label className="form-label">Client / Business Name *</label>
-            <input type="text" className="form-input" value={form.name} onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))} placeholder="e.g. Acme Corp" />
+            <input type="text" className="form-input" value={form.name} onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))} placeholder="e.g. Sharma Auto Garage" />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Customer Type (Price Tier)</label>
+            <select className="form-input" value={form.customerType} onChange={e => setForm(prev => ({ ...prev, customerType: e.target.value }))}>
+              <option value="Retail">Retail Customer</option>
+              <option value="Mechanic">Mechanic</option>
+              <option value="Garage">Garage</option>
+              <option value="Workshop">Workshop</option>
+              <option value="Wholesaler">Wholesaler</option>
+              <option value="Dealer">Dealer</option>
+              <option value="Other">Other</option>
+            </select>
           </div>
           <div className="form-group" style={{ gridColumn: 'span 2' }}>
             <label className="form-label">Address</label>
@@ -138,6 +169,30 @@ export default function ClientModal({ show, onClose, onSave, client, isEditing, 
           <div className="form-group">
             <label className="form-label">Phone</label>
             <input type="tel" className="form-input" value={form.phone} onChange={e => setForm(prev => ({ ...prev, phone: e.target.value }))} placeholder={abroad ? 'With country code, e.g. +1 415 555 0100' : '+91 98765 43210'} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Account Code & Vehicle No</label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+              <input type="text" className="form-input" value={form.accountCode} onChange={e => setForm(prev => ({ ...prev, accountCode: e.target.value }))} placeholder="CUST-01" />
+              <input type="text" className="form-input" value={form.vehicleNo} onChange={e => setForm(prev => ({ ...prev, vehicleNo: e.target.value.toUpperCase() }))} placeholder="DL-01-AB-1234" />
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Credit Limit (₹) & Days</label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 6 }}>
+              <input type="number" className="form-input" value={form.creditLimit} onChange={e => setForm(prev => ({ ...prev, creditLimit: e.target.value }))} placeholder="Credit Limit ₹" />
+              <input type="number" className="form-input" value={form.creditDays} onChange={e => setForm(prev => ({ ...prev, creditDays: e.target.value }))} placeholder="Days" />
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Opening Balance (₹)</label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 6 }}>
+              <input type="number" step="any" className="form-input" value={form.openingBalance} onChange={e => setForm(prev => ({ ...prev, openingBalance: e.target.value }))} placeholder="0.00" />
+              <select className="form-input" value={form.openingType} onChange={e => setForm(prev => ({ ...prev, openingType: e.target.value }))}>
+                <option value="Dr">Dr (Receivable)</option>
+                <option value="Cr">Cr (Advance)</option>
+              </select>
+            </div>
           </div>
           {abroad && (defaultCountry || 'India') === 'India' && (
             <div className="form-group notice notice-info" style={{ gridColumn: 'span 2', display: 'block', fontSize: '0.78rem', lineHeight: 1.5, padding: '0.5rem 0.75rem', borderRadius: 6 }}>

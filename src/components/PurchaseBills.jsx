@@ -139,18 +139,12 @@ export default function PurchaseBills() {
   // number on save, so a number the user typed is kept.
   const previewedPoRef = useRef('');
   const applyOCR = (extracted) => {
-    // v1.10.35 — Now consumes the richer payload from BillOCR:
-    // extracted.items[] with name/hsn/qty/rate/taxPercent/amount, and
-    // extracted.taxBreakdown with cgst/sgst/igst/cess. Falls back to
-    // the old single-line-from-grand-total behaviour only if no line
-    // items were detected at all.
+    setShowOCR(false);
     setEditingId(null);
     let items;
     if (Array.isArray(extracted.items) && extracted.items.length > 0) {
-      // Trust the OCR-extracted line items. Strip the internal match
-      // metadata (_matchedProductId etc.) since the purchase form
-      // doesn't consume it.
       items = extracted.items.map(it => ({
+        productId: it.productId || '',
         name: it.name || '',
         hsn: it.hsn || '',
         quantity: Number(it.quantity) || 1,
@@ -158,30 +152,29 @@ export default function PurchaseBills() {
         taxPercent: Number(it.taxPercent) || 0,
         cessPercent: 0,
       }));
-    } else if (extracted.grandTotal > 0) {
-      // Legacy fallback — no line items detected, seed a single-row
-      // placeholder from the grand total so the user has something to
-      // split.
-      items = [{ name: 'From OCR — split into real items', hsn: '', quantity: 1, rate: extracted.grandTotal, taxPercent: 0, cessPercent: 0 }];
+    } else if (extracted.grandTotal > 0 || extracted.totalAmount > 0) {
+      items = [{ name: 'From OCR — split into real items', hsn: '', quantity: 1, rate: extracted.grandTotal || extracted.totalAmount, taxPercent: 0, cessPercent: 0 }];
     } else {
       items = [{ ...emptyItem }];
     }
-    // v1.10.74 - IGST on the bill and no CGST means the supplier is in
-    // another state, so open the form with Inter-state ticked.
     const tb = extracted.taxBreakdown || {};
+    const igstVal = Number(extracted.igst ?? tb.igst ?? 0);
+    const cgstVal = Number(extracted.cgst ?? tb.cgst ?? 0);
     setForm({
       ...emptyForm,
       date: extracted.date || localToday(),
       supplierName: extracted.supplierName || '',
       supplierGstin: extracted.supplierGstin || '',
-      invoiceNumber: extracted.invoiceNumber || '',
+      invoiceNumber: extracted.invoiceNumber || extracted.billNumber || '',
       items,
-      interstate: Number(tb.igst) > 0 && !Number(tb.cgst),
+      interstate: igstVal > 0 && !cgstVal,
+      note: extracted.notes || '',
     });
     setShowForm(true);
+    loadProducts();
     const msg = Array.isArray(extracted.items) && extracted.items.length > 0
-      ? `OCR loaded ${extracted.items.length} line item${extracted.items.length === 1 ? '' : 's'} — review HSN + tax rates before saving.`
-      : 'OCR values loaded — please review, then break the total into line items with correct GST.';
+      ? `AI/OCR loaded ${extracted.items.length} spare part item${extracted.items.length === 1 ? '' : 's'} — review and click Save Purchase.`
+      : 'OCR values loaded — please review line items and GST rates.';
     toast(msg, 'info');
   };
 
@@ -1134,10 +1127,10 @@ export default function PurchaseBills() {
           onDuplicate={openNewPo} onCancel={cancelPo} />
       )}
 
-      {/* v1.10.22 — Bill OCR modal (tesseract.js, lazy-loaded). */}
+      {/* v1.10.22 — Bill OCR modal (AI + local OCR). */}
       {showOCR && (
-        <Suspense fallback={<div className="modal-overlay"><div className="modal-content" style={{ maxWidth: 320, textAlign: 'center' }}>Loading OCR…</div></div>}>
-          <BillOCR onClose={() => setShowOCR(false)} onExtracted={applyOCR} />
+        <Suspense fallback={<div className="modal-overlay"><div className="modal-content" style={{ maxWidth: 320, textAlign: 'center' }}>Loading AI / OCR Extractor…</div></div>}>
+          <BillOCR onClose={() => setShowOCR(false)} onExtracted={applyOCR} showToast={toast} />
         </Suspense>
       )}
 

@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { Maximize2, ArrowLeft, Plus, Trash2, Download, UserPlus, Pencil, Settings, ChevronUp, ChevronDown, MessageCircle, Check, Loader, Truck, Printer, Eye, EyeOff, QrCode } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
-import { saveBill, deleteBill, applyStockChanges, getNextInvoiceNumber, getTermsTemplates, getAllClients, saveClient, getProfile, getAllProducts, getInvoiceDisplayOptions, saveInvoiceDisplayOptions, getAllProfiles, getRegionMode, saveRecurring, getAllRecurring, getAllBills, getEnabledModules, getBusinessType } from '../store';
+import { saveBill, deleteBill, applyStockChanges, getNextInvoiceNumber, getTermsTemplates, getAllClients, saveClient, getProfile, getAllProducts, getInvoiceDisplayOptions, saveInvoiceDisplayOptions, getAllProfiles, getRegionMode, saveRecurring, getAllRecurring, getAllBills, getEnabledModules, getBusinessType, getInventorySettingsSync } from '../store';
+import { getPriceForCustomerType, productMatchesSearch } from '../utils/products';
 import { INVOICE_TYPES, isModuleEnabled, businessKeyOf, GST_DOC_NUMBER, COUNTRIES, printedSubtotal, deliveryChargeLine, stockEffect, appliedStock, stockDelta, generateEWayBillJSON, formatCurrency, getCountryConfig, getStatesForCountry, getAllUnits, addCustomUnit, removeCustomUnit, getCountriesForRegion, TDS_SECTIONS, TCS_SECTIONS, REMOVED_TCS_SECTIONS, TERMS_PRESETS, getActiveAccounts, getDefaultAccount, getAccountById, getDefaultUnitForMode, filterUnitsByMode, PAPER_SIZES, getPaperSize, computeInvoiceTotals, clientYearToDate, htmlHasText, ORDER_DETAIL_FIELDS, invoiceOptionOn, DEFAULT_DECLARATION, decodeGstin, safePageBoundaries, localToday, toLocalIsoDate, parseLocalDate, paymentStatusFor, getStateCode } from '../utils';
 import { getPrintSettings, savePrintSettings } from '../utils/printSettings';
 import { openWhatsAppShare } from '../utils/share';
@@ -979,8 +980,19 @@ export default function InvoiceGenerator({ onBack, profile: profileProp, editing
     if (!hasRealItem) {
       return 'Add at least one item with a quantity and rate before saving.';
     }
+    // Enforce Allow Negative Stock setting for sales invoices
+    const invCfg = getInventorySettingsSync();
+    if (!invCfg.allowNegativeStock && invoiceType === 'tax-invoice') {
+      for (const item of items) {
+        if (!item.name?.trim() || item.isCharge) continue;
+        const prod = products.find(p => p.id === item.productId || p.name?.toLowerCase() === item.name?.trim().toLowerCase());
+        if (prod && prod.kind !== 'service' && prod.stock !== undefined && Number(item.quantity) > Number(prod.stock)) {
+          return `Insufficient stock for "${prod.name}" (Available: ${prod.stock}, Requested: ${item.quantity}). Allow Negative Stock is currently OFF.`;
+        }
+      }
+    }
     return null;
-  }, [client?.name, items, editingBill]);
+  }, [client?.name, items, editingBill, invoiceType, products]);
 
   // Debounced auto-save (2s after last change), gated on meaningful content.
   //
@@ -1493,9 +1505,11 @@ export default function InvoiceGenerator({ onBack, profile: profileProp, editing
   }, []);
 
   const selectProduct = useCallback((itemId, product) => {
-    // v1.10.29 — Prefer sellingPrice for sales invoices (falls back to
-    // legacy `rate` for pre-v1.10.29 products).
-    const salePrice = product.sellingPrice ?? product.rate ?? 0;
+    // Auto-select price tier based on customerType (Retail, Mechanic, Garage, Workshop, Wholesaler, Dealer)
+    const activeClientRecord = savedClients.find(c => c.id === selectedClientId || c.name?.toLowerCase() === client?.name?.trim().toLowerCase());
+    const custType = activeClientRecord?.customerType || client?.customerType || 'Retail';
+    const { price: tieredPrice } = getPriceForCustomerType(product, custType);
+    const salePrice = tieredPrice || product.sellingPrice || product.rate || 0;
     setItems(prev => prev.map(item => item.id === itemId ? {
       ...item,
       name: product.name,
@@ -1507,14 +1521,11 @@ export default function InvoiceGenerator({ onBack, profile: profileProp, editing
       isCharge: false, // a product picked on the delivery line makes it a product line
     } : item));
     setProductSearch({ itemId: null, query: '' });
-  }, [countryTaxRates]);
+  }, [countryTaxRates, savedClients, selectedClientId, client?.name, client?.customerType]);
 
   const getProductSuggestions = useCallback((itemId) => {
     if (productSearch.itemId !== itemId || !productSearch.query.trim()) return [];
-    const q = productSearch.query.toLowerCase();
-    return products.filter(p =>
-      p.name?.toLowerCase().includes(q) || p.hsn?.toLowerCase().includes(q)
-    ).slice(0, 5);
+    return products.filter(p => productMatchesSearch(p, productSearch.query)).slice(0, 8);
   }, [productSearch.itemId, productSearch.query, products]);
 
   // v1.10.77 (#87) - one delivery-charges line per invoice (see deliveryChargeLine).

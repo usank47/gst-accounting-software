@@ -270,13 +270,14 @@ export default defineConfig({
     },
   },
   server: {
+    host: '0.0.0.0',
+    port: 3000,
+    allowedHosts: true,
     proxy: {
-      // v1.10.6 — audit L20: was hardcoded 47371. Now reads
-      // `data/port.txt` at Vite start (see `activeExpressPort` at top
-      // of file). Restart Vite if the server rebooted onto a new port.
       '/api': {
-        target: `http://localhost:${activeExpressPort}`,
+        target: `http://127.0.0.1:${activeExpressPort}`,
         changeOrigin: true,
+        router: () => `http://127.0.0.1:${readActivePort()}`,
       }
     }
   }

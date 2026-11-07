@@ -122,6 +122,47 @@ export const saveStockAlertSettings = async (settings) => {
   });
 };
 
+// ---- Automotive Inventory Settings (Allow Negative Stock, Multi-Location) ----
+const INV_SETTINGS_LOCAL_KEY = 'gst_inventorySettings';
+const DEFAULT_INVENTORY_SETTINGS = {
+  allowNegativeStock: true,
+  multiLocationEnabled: false,
+  defaultMaterialCentre: 'Main Store',
+  deadStockDays: 180,
+  fastMovingMinSales: 10,
+};
+
+export const getInventorySettingsSync = () => {
+  try {
+    const raw = localStorage.getItem(INV_SETTINGS_LOCAL_KEY);
+    return { ...DEFAULT_INVENTORY_SETTINGS, ...(raw ? JSON.parse(raw) : {}) };
+  } catch {
+    return { ...DEFAULT_INVENTORY_SETTINGS };
+  }
+};
+
+export const getInventorySettings = async () => {
+  try {
+    const { value } = await apiFetch(`${API}/meta/inventorySettings`);
+    const merged = { ...getInventorySettingsSync(), ...(value || {}) };
+    try { localStorage.setItem(INV_SETTINGS_LOCAL_KEY, JSON.stringify(merged)); } catch { /* ignore */ }
+    return merged;
+  } catch {
+    return getInventorySettingsSync();
+  }
+};
+
+export const saveInventorySettings = async (settings) => {
+  const merged = { ...getInventorySettingsSync(), ...(settings || {}) };
+  try { localStorage.setItem(INV_SETTINGS_LOCAL_KEY, JSON.stringify(merged)); } catch { /* ignore */ }
+  await apiFetch(`${API}/meta/inventorySettings`, {
+    method: 'POST',
+    body: JSON.stringify({ value: merged }),
+  }).catch(() => {});
+  try { window.dispatchEvent(new CustomEvent('fgsb-inventory-settings-changed', { detail: merged })); } catch { /* ignore */ }
+  return merged;
+};
+
 // v1.10.76 (#80) - add { productId: change } to product stock (see
 // stockEffect in utils.js). Returns the products as saved.
 export const applyStockChanges = async (changes) => {
@@ -482,6 +523,76 @@ export const deleteBusinessProfile = async (id) => {
   return apiFetch(`${API}/profiles/${encodeURIComponent(id)}`, { method: 'DELETE' });
 };
 
+// ---- Suppliers (Sundry Creditors / Automotive Vendors) ----
+export const getAllSuppliers = async () => apiFetch(`${API}/suppliers`);
+
+export const saveSupplier = async (supplier) => {
+  const res = await apiFetch(`${API}/suppliers`, { method: 'POST', body: JSON.stringify(supplier) });
+  if (res.id) supplier.id = res.id;
+  return supplier;
+};
+
+export const deleteSupplier = async (id) =>
+  apiFetch(`${API}/suppliers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
+// ---- Accounting Ledgers (Chart of Accounts) ----
+export const getAllLedgers = async () => apiFetch(`${API}/ledgers`);
+
+export const saveLedger = async (ledger) => {
+  const res = await apiFetch(`${API}/ledgers`, { method: 'POST', body: JSON.stringify(ledger) });
+  if (res.id) ledger.id = res.id;
+  return ledger;
+};
+
+export const deleteLedger = async (id) =>
+  apiFetch(`${API}/ledgers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
+// ---- Accounting Vouchers (Payment, Receipt, Journal, Contra, Credit/Debit Note, Stock Journal) ----
+export const getAllVouchers = async () => apiFetch(`${API}/vouchers`);
+
+export const saveVoucher = async (voucher) => {
+  const res = await apiFetch(`${API}/vouchers`, { method: 'POST', body: JSON.stringify(voucher) });
+  if (res.id) voucher.id = res.id;
+  return voucher;
+};
+
+export const deleteVoucher = async (id) =>
+  apiFetch(`${API}/vouchers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
+// ---- Warehouses / Material Centres ----
+export const getAllWarehouses = async () => apiFetch(`${API}/warehouses`);
+
+export const saveWarehouse = async (wh) => {
+  const res = await apiFetch(`${API}/warehouses`, { method: 'POST', body: JSON.stringify(wh) });
+  if (res.id) wh.id = res.id;
+  return wh;
+};
+
+export const deleteWarehouse = async (id) =>
+  apiFetch(`${API}/warehouses/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
+// ---- Supplier Bill Extraction Templates ----
+export const getAllSupplierTemplates = async () => apiFetch(`${API}/supplier-templates`);
+
+export const saveSupplierTemplate = async (tpl) => {
+  const res = await apiFetch(`${API}/supplier-templates`, { method: 'POST', body: JSON.stringify(tpl) });
+  if (res.id) tpl.id = res.id;
+  return tpl;
+};
+
+export const deleteSupplierTemplate = async (id) =>
+  apiFetch(`${API}/supplier-templates/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
+// ---- BUSY Accounting Import ----
+export const getAllBusyImports = async () => apiFetch(`${API}/busy-imports`);
+
+export const commitBusyImport = async (payload) =>
+  apiFetch(`${API}/busy-imports/commit`, { method: 'POST', body: JSON.stringify(payload) });
+
+// ---- AI Purchase Bill Extraction ----
+export const extractPurchaseBillAI = async (payload) =>
+  apiFetch(`${API}/ai/extract-purchase-bill`, { method: 'POST', body: JSON.stringify(payload) });
+
 // ---- Export / Import ----
 // localStorage keys that are part of the "user's data" and should ride along in any
 // backup. Each key is documented with what it stores and whether losing it matters.
@@ -501,6 +612,7 @@ const EXPORTABLE_LOCALSTORAGE_KEYS = [
   'gst_itrPresumptive',              // v1.8.0 — presumptive taxation state
   'gst_itrAdvanceTax',               // v1.8.0 — advance tax state
   'gst_stockAlertSettings',          // v1.6.3 — low-stock threshold + on/off
+  'gst_inventorySettings',           // automotive inventory settings (allowNegativeStock, multiLocationEnabled)
   'freegstbill_invoiceOptions',      // per-invoice display preference defaults
   'freegstbill_theme',               // light/dark (was written as 'theme' in the old whitelist — typo)
   'freegstbill_onboarded',           // skip welcome wizard on next launch
