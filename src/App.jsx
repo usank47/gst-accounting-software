@@ -1131,17 +1131,17 @@ function App() {
              matched view's chunk actually loads; others stay unfetched. */}
         <Suspense fallback={<ViewLoading />}>
         {currentView === 'pos' && (
-          <POSView key={businessKey} onNewInvoice={handleNewInvoice} />
+          <POSView key={businessKey} showToast={toast} onOpenFullInvoice={handleNewInvoice} />
         )}
         {currentView === 'clients' && (
           <ClientsView onNew={handleNewInvoice} onEdit={handleEditInvoice} onDuplicate={handleDuplicateInvoice} />
         )}
         {currentView === 'inventory' && (
           // v1.10.83 (#115) - remounted per business, like the screens below, so its production list follows the switch.
-          <InventoryView key={businessKey} onOpenBusyImport={() => setShowBusyModal(true)} />
+          <InventoryView key={businessKey} showToast={toast} onOpenBusyImport={() => setShowBusyModal(true)} />
         )}
         {currentView === 'accounting' && (
-          <AccountingView key={businessKey} />
+          <AccountingView key={businessKey} showToast={toast} />
         )}
         {/* v1.10.66 (#64 item 1) — `key={businessKey}` remounts these screens
             when the business changes. Each reads the business once when it
@@ -1184,7 +1184,14 @@ function App() {
         </Suspense>
         {showBusyModal && (
           <Suspense fallback={<ViewLoading />}>
-            <BusyImportModal onClose={() => setShowBusyModal(false)} />
+            <BusyImportModal
+              showToast={toast}
+              onClose={() => setShowBusyModal(false)}
+              onImportCompleted={() => {
+                // Force refresh of current view data when BUSY import completes
+                setEditorKey(k => k + 1);
+              }}
+            />
           </Suspense>
         )}
         {/* Version + DiceCodes line: Dashboard only, so it never takes space on working screens. */}

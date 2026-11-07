@@ -11,6 +11,7 @@ import {
 } from '../store';
 import { matchProductToMaster, normalizeAutomotiveProduct } from '../utils/products';
 import { formatCurrency } from '../utils';
+import { toast } from './Toast';
 
 const SAMPLE_AI_PURCHASE_INVOICE = {
   supplierName: 'Minda & Bosch Auto Electricals Distributorship',
@@ -82,7 +83,7 @@ const fileToBase64 = (file) =>
     reader.readAsDataURL(file);
   });
 
-export default function BillOCR({ onExtracted, onClose, showToast }) {
+export default function BillOCR({ onExtracted, onClose, showToast = toast }) {
   const [stage, setStage] = useState('pick'); // 'pick' | 'running' | 'review'
   const [statusMsg, setStatusMsg] = useState('');
   const [progress, setProgress] = useState(0);

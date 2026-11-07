@@ -19,8 +19,9 @@ import {
 } from '../utils/busyParser';
 import { readXlsxRows } from '../utils/xlsx';
 import { formatCurrency } from '../utils';
+import { toast } from './Toast';
 
-export default function BusyImportModal({ onClose, onImportCompleted, showToast }) {
+export default function BusyImportModal({ onClose, onImportCompleted, showToast = toast }) {
   const [currentStep, setCurrentStep] = useState(1);
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [detectedMeta, setDetectedMeta] = useState([]);
@@ -203,12 +204,13 @@ export default function BusyImportModal({ onClose, onImportCompleted, showToast 
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(8, minmax(110px, 1fr))',
+            gridTemplateColumns: 'repeat(8, minmax(112px, 1fr))',
             gap: 6,
-            padding: '10px 0',
-            borderBottom: '1px solid var(--border)',
-            marginBottom: 14,
+            padding: '6px 0 10px 0',
+            borderBottom: '1px solid var(--border-color)',
+            marginBottom: 10,
             overflowX: 'auto',
+            flexShrink: 0,
           }}
         >
           {BUSY_WIZARD_STEPS.map(s => {
@@ -220,19 +222,21 @@ export default function BusyImportModal({ onClose, onImportCompleted, showToast 
                 onClick={() => {
                   if (parsedRecords.length > 0 && s.step <= 12) setCurrentStep(s.step);
                 }}
+                title={`Step ${s.step}: ${s.title} — ${s.desc}`}
                 style={{
                   padding: '6px 8px',
-                  borderRadius: 6,
+                  borderRadius: 8,
                   fontSize: '0.73rem',
+                  lineHeight: 1.3,
                   cursor: parsedRecords.length > 0 && s.step <= 12 ? 'pointer' : 'default',
-                  border: active ? '1.5px solid var(--primary)' : '1px solid var(--border)',
-                  background: done ? 'rgba(16, 185, 129, 0.1)' : active ? 'var(--bg-hover)' : 'var(--bg-secondary)',
+                  border: active ? '2px solid var(--primary)' : done ? '1px solid rgba(5, 150, 105, 0.35)' : '1px solid var(--border-color)',
+                  background: done ? 'var(--success-light)' : active ? 'var(--bg-hover)' : 'var(--bg-secondary)',
                 }}
               >
                 <div style={{ fontWeight: 700, color: done ? 'var(--success)' : active ? 'var(--primary)' : 'var(--text-muted)' }}>
                   {done ? '✓ ' : ''}Step {s.step}
                 </div>
-                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: active ? 600 : 400 }}>
+                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: active ? 700 : 500, color: 'var(--text-primary)' }}>
                   {s.title}
                 </div>
               </div>
@@ -240,8 +244,40 @@ export default function BusyImportModal({ onClose, onImportCompleted, showToast 
           })}
         </div>
 
+        {/* Active Step Banner */}
+        {(() => {
+          const activeStepMeta = BUSY_WIZARD_STEPS.find(s => s.step === currentStep) || BUSY_WIZARD_STEPS[0];
+          return (
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 10,
+                padding: '7px 12px',
+                borderRadius: 8,
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border-color)',
+                marginBottom: 12,
+                fontSize: '0.8rem',
+                flexShrink: 0,
+              }}
+            >
+              <div>
+                <strong style={{ color: 'var(--primary)' }}>Step {activeStepMeta.step} of 16 — {activeStepMeta.title}:</strong>{' '}
+                <span style={{ color: 'var(--text-secondary)' }}>{activeStepMeta.desc}</span>
+              </div>
+              {parsedRecords.length > 0 && (
+                <span className="tag" style={{ flexShrink: 0 }}>
+                  {parsedRecords.length} total source records loaded
+                </span>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Body */}
-        <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4 }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4 }}>
           {currentStep <= 4 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               <div
@@ -423,8 +459,8 @@ export default function BusyImportModal({ onClose, onImportCompleted, showToast 
               </div>
 
               {/* Step 6, 7, 8, 9 Detailed Record Table */}
-              <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
-                <div className="table-scroll" style={{ maxHeight: 290 }}>
+              <div className="glass-card" style={{ padding: 0, overflow: 'hidden', flexShrink: 0 }}>
+                <div className="table-scroll" style={{ maxHeight: 320 }}>
                   <table className="data-table">
                     <thead>
                       <tr>

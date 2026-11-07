@@ -28,6 +28,7 @@ import { writeXlsxFile, readXlsxRows } from '../utils/xlsx';
 import ConfirmModal from './ConfirmModal';
 import { ProductionList } from './Manufacturing';
 import TableExport from './TableExport';
+import { toast } from './Toast';
 
 const COMMON_UNITS = ['Nos', 'Set', 'Kit', 'Pair', 'Ltr', 'Mtr', 'Kg', 'Box', 'Pcs', 'Bottle', 'Can', 'Roll'];
 const GST_RATES = [0, 5, 12, 18, 28];
@@ -80,7 +81,7 @@ const emptyProductForm = () => ({
   crossReferences: [],
 });
 
-export default function InventoryView({ showToast, initialAction, clearInitialAction, onOpenBusyImport }) {
+export default function InventoryView({ showToast = toast, initialAction, clearInitialAction, onOpenBusyImport }) {
   const [products, setProducts] = useState([]);
   const [bills, setBills] = useState([]);
   const [purchases, setPurchases] = useState([]);
