@@ -177,3 +177,61 @@ test('BUSY Accounting: .DAT Parser and Strict Mathematical Reconciliation', () =
 
   assert.ok(recon.counts.newCount >= 1, 'Should detect new masters');
 });
+
+test('BUSY Accounting: Native XML MSAll.DAT Parser (Accounts + Items with numeric MasterType codes)', () => {
+  const xmlDat = `<BusyData>
+    <Account>
+      <Name>Rajesh Auto Electricals</Name>
+      <PrintName>Rajesh Auto Electricals</PrintName>
+      <MasterType>1</MasterType>
+      <ParentGroup>Sundry Debtors</ParentGroup>
+      <GSTNo>07AABCR1234F1Z5</GSTNo>
+      <Mobile>9811002233</Mobile>
+      <Address1>Kashmere Gate</Address1>
+      <Address2>Delhi</Address2>
+      <OpBal>15400</OpBal>
+    </Account>
+    <Account>
+      <Name>Minda Corporation Ltd</Name>
+      <MasterType>1</MasterType>
+      <ParentGroup>Sundry Creditors</ParentGroup>
+      <GSTNo>URP</GSTNo>
+      <OpBal>-28000</OpBal>
+    </Account>
+    <Item>
+      <Name>Headlight Relay 12V 90/100W</Name>
+      <Alias>HL-RLY-100</Alias>
+      <ParentGroup>Uno Minda</ParentGroup>
+      <UnitName>Pcs</UnitName>
+      <HSNCode>85364100</HSNCode>
+      <TaxCatName>GST 18%</TaxCatName>
+      <SalePrice>450</SalePrice>
+      <PurPrice>310</PurPrice>
+      <MRP>520</MRP>
+      <OpBalQty>25</OpBalQty>
+      <OpBalVal>7750</OpBalVal>
+    </Item>
+  </BusyData>`;
+
+  const records = parseBusyFileRecords('20261103_MSAll.DAT', xmlDat);
+  assert.equal(records.length, 3, 'Should parse all 3 XML blocks');
+  assert.equal(records[0].subType, 'Account', 'Should classify <Account> with <MasterType>1</MasterType> as Account, not Master: 1');
+  assert.equal(records[1].subType, 'Account');
+  assert.equal(records[1].gstin, '', 'Should normalize URP placeholder GSTIN to empty string');
+  assert.equal(records[2].subType, 'Item');
+  assert.equal(records[2].stock, 25, 'Should extract OpBalQty as stock');
+  assert.equal(records[2].sellingPrice, 450, 'Should extract SalePrice');
+  assert.equal(records[2].purchasePrice, 310, 'Should extract PurPrice');
+  assert.equal(records[2].taxPercent, 18, 'Should parse 18 from TaxCatName "GST 18%"');
+
+  const recon = reconcileBusyImport({ records });
+  assert.equal(recon.counts.reconciled, true);
+  assert.equal(recon.counts.newCount, 3);
+  assert.equal(recon.byMasterType['Account'], 2);
+  assert.equal(recon.byMasterType['Item'], 1);
+  assert.equal(recon.financialImpact.newProductsStockQty, 25);
+  assert.equal(recon.financialImpact.newProductsStockValue, 25 * 310);
+  assert.equal(recon.financialImpact.debtorsOpeningDr, 15400);
+  assert.equal(recon.financialImpact.creditorsOpeningCr, 28000);
+});
+

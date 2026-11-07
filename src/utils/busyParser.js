@@ -79,13 +79,13 @@ export function detectBusyFileMetadata(fileName = '', content = '', byteLength =
   let format = ext.toUpperCase() || 'DAT';
   let busyCategory = 'Mixed (Masters + Transactions)';
 
-  const hasMasterMarkers = /MasterType|RecordType\s*[:=]\s*["']?(Account|Item|Item Group|Tax Category|Unit|Bill Sundry)|\[MASTER|<Master/i.test(sample);
-  const hasTxnMarkers = /VoucherType|TxnType|RecordType\s*[:=]\s*["']?(Sales|Purchase|Payment|Receipt|Journal|Contra|Call Allocation)|\[VOUCHER|<Voucher/i.test(sample);
+  const hasMasterMarkers = /MasterType|RecordType\s*[:=]\s*["']?(Account|Item|Item Group|Tax Category|Unit|Bill Sundry)|\[MASTER|<Master|<Account\b|<AccountGroup\b|<Item\b|<ItemGroup\b|<Unit\b|<TaxCategory\b|<BillSundry\b/i.test(sample);
+  const hasTxnMarkers = /VoucherType|TxnType|RecordType\s*[:=]\s*["']?(Sales|Purchase|Payment|Receipt|Journal|Contra|Call Allocation)|\[VOUCHER|<Voucher|<Sales\b|<Purchase\b|<Receipt\b|<Payment\b|<Journal\b|<Contra\b/i.test(sample);
 
   if (hasMasterMarkers && !hasTxnMarkers) busyCategory = 'BUSY Masters (.DAT)';
   else if (hasTxnMarkers && !hasMasterMarkers) busyCategory = 'BUSY Transactions (.DAT)';
-  else if (/master/i.test(fileName) && !/txn|vch|tran/i.test(fileName)) busyCategory = 'BUSY Masters';
-  else if (/txn|vch|tran/i.test(fileName)) busyCategory = 'BUSY Transactions';
+  else if (/^ms|master/i.test(fileName) && !/txn|vch|tran/i.test(fileName)) busyCategory = 'BUSY Masters (.DAT)';
+  else if (/^tr|txn|vch|tran/i.test(fileName)) busyCategory = 'BUSY Transactions (.DAT)';
 
   let subFormat = 'Delimited / Key-Value DAT';
   const trimmed = sample.trim();
@@ -132,6 +132,75 @@ function splitDelimitedLine(line, delimiter = ',') {
   return out;
 }
 
+// Decode basic XML entities in BUSY .DAT XML values
+function decodeXmlEntities(str = '') {
+  return String(str)
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .trim();
+}
+
+// BUSY numeric MasterType codes used inside <MasterType> or <Type> in BUSY .DAT exports
+const BUSY_NUMERIC_MASTER_CODE_MAP = {
+  '1': 'Account Group',
+  '2': 'Account',
+  '3': 'Cost Centre',
+  '4': 'Standard Narration',
+  '5': 'Item Group',
+  '6': 'Item',
+  '7': 'Material Centre',
+  '8': 'Unit',
+  '9': 'Bill Sundry',
+  '11': 'Sale Type',
+  '12': 'Purchase Type',
+  '13': 'Tax Category',
+  '15': 'Executive',
+  '16': 'Discount Structure',
+};
+
+// Map XML outer tag names directly to canonical BUSY Master/Transaction types
+const BUSY_XML_TAG_MAP = {
+  account: { domain: 'Master', subType: 'Account' },
+  accountmaster: { domain: 'Master', subType: 'Account' },
+  accountgroup: { domain: 'Master', subType: 'Account Group' },
+  item: { domain: 'Master', subType: 'Item' },
+  itemmaster: { domain: 'Master', subType: 'Item' },
+  itemgroup: { domain: 'Master', subType: 'Item Group' },
+  unit: { domain: 'Master', subType: 'Unit' },
+  unitmaster: { domain: 'Master', subType: 'Unit' },
+  unitconversion: { domain: 'Master', subType: 'Unit Conversion' },
+  taxcategory: { domain: 'Master', subType: 'Tax Category' },
+  billsundry: { domain: 'Master', subType: 'Bill Sundry' },
+  saletype: { domain: 'Master', subType: 'Sale Type' },
+  purchasetype: { domain: 'Master', subType: 'Purchase Type' },
+  billofmaterial: { domain: 'Master', subType: 'Bill of Material' },
+  godown: { domain: 'Master', subType: 'Unit' },
+  materialcentre: { domain: 'Master', subType: 'Unit' },
+  executive: { domain: 'Master', subType: 'Executive' },
+  sales: { domain: 'Transaction', subType: 'Sales' },
+  sale: { domain: 'Transaction', subType: 'Sales' },
+  purchase: { domain: 'Transaction', subType: 'Purchase' },
+  salesreturn: { domain: 'Transaction', subType: 'Sales Return' },
+  purchasereturn: { domain: 'Transaction', subType: 'Purchase Return' },
+  salesorder: { domain: 'Transaction', subType: 'Sales Order' },
+  purchaseorder: { domain: 'Transaction', subType: 'Purchase Order' },
+  payment: { domain: 'Transaction', subType: 'Payment' },
+  receipt: { domain: 'Transaction', subType: 'Receipt' },
+  journal: { domain: 'Transaction', subType: 'Journal' },
+  contra: { domain: 'Transaction', subType: 'Contra' },
+  debitnote: { domain: 'Transaction', subType: 'Debit Note' },
+  creditnote: { domain: 'Transaction', subType: 'Credit Note' },
+  stocktransfer: { domain: 'Transaction', subType: 'Stock Transfer' },
+  stockjournal: { domain: 'Transaction', subType: 'Stock Journal' },
+  production: { domain: 'Transaction', subType: 'Production' },
+  unassemble: { domain: 'Transaction', subType: 'Unassemble' },
+  salesquotation: { domain: 'Transaction', subType: 'Sales Quotation' },
+  purchasequotation: { domain: 'Transaction', subType: 'Purchase Quotation' },
+};
+
 // Step 4: Parse raw content (.DAT, .JSON, .CSV, or XLSX row array) into normalized source records
 export function parseBusyFileRecords(fileName = '', rawContent = '') {
   // If already an array of objects (e.g., from XLSX parser)
@@ -162,23 +231,32 @@ export function parseBusyFileRecords(fileName = '', rawContent = '') {
     }
   }
 
-  // 2. XML-like BUSY .DAT export (<Record .../> or <Master>...</Master> or <Voucher>...</Voucher>)
+  // 2. XML-like BUSY .DAT export (e.g. 20261103_MSAll.DAT / TRAll.DAT with <Account>, <Item>, <AccountGroup>, <Voucher>, <Record>, etc.)
   if (text.startsWith('<')) {
     const records = [];
-    const blockRegex = /<(Record|Master|Account|Item|Voucher|Transaction)\b([^>]*)>([\s\S]*?)<\/\1>|<Record\b([^>]*)\/>/gi;
+    const blockRegex = /<(Record|Master|Account|AccountMaster|AccountGroup|Item|ItemMaster|ItemGroup|Unit|UnitMaster|UnitConversion|TaxCategory|BillSundry|SaleType|PurchaseType|BillOfMaterial|Godown|MaterialCentre|Executive|Voucher|Transaction|Sales|Sale|Purchase|SalesReturn|PurchaseReturn|SalesOrder|PurchaseOrder|Payment|Receipt|Journal|Contra|DebitNote|CreditNote|StockTransfer|StockJournal|Production|Unassemble|SalesQuotation|PurchaseQuotation)\b([^>]*)>([\s\S]*?)<\/\1>|<Record\b([^>]*)\/>/gi;
     let match;
     let idx = 1;
     while ((match = blockRegex.exec(text)) !== null) {
-      const obj = {};
+      const tagName = match[1] || 'Record';
+      const obj = { _xmlTag: tagName };
       const attrStr = match[2] || match[4] || '';
       const innerStr = match[3] || '';
       const attrRe = /(\w+)\s*=\s*["']([^"']*)["']/g;
       let am;
-      while ((am = attrRe.exec(attrStr)) !== null) obj[am[1]] = am[2];
-      const tagRe = /<(\w+)>([^<]*)<\/\1>/g;
+      while ((am = attrRe.exec(attrStr)) !== null) obj[am[1]] = decodeXmlEntities(am[2]);
+      // Extract all leaf <Tag>Value</Tag> pairs (including nested leaf tags inside <Address> or <ItemDetails>)
+      const tagRe = /<([A-Za-z0-9_]+)>([^<>]*)<\/\1>/g;
       let tm;
-      while ((tm = tagRe.exec(innerStr)) !== null) obj[tm[1]] = tm[2].trim();
-      if (Object.keys(obj).length > 0) {
+      while ((tm = tagRe.exec(innerStr)) !== null) {
+        const key = tm[1];
+        const val = decodeXmlEntities(tm[2]);
+        // Preserve the first non-empty occurrence (usually header/main level) or fill if empty
+        if (obj[key] === undefined || obj[key] === '') {
+          obj[key] = val;
+        }
+      }
+      if (Object.keys(obj).length > 1) {
         records.push(normalizeRawBusyRow(obj, fileName, idx++));
       }
     }
@@ -242,29 +320,62 @@ function getField(row, candidates = []) {
   return '';
 }
 
+function parseNum(val, fallback = 0) {
+  if (val === undefined || val === null || val === '') return fallback;
+  if (typeof val === 'number') return Number.isFinite(val) ? val : fallback;
+  const cleaned = String(val).replace(/,/g, '').replace(/[^\d.-]/g, '');
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function parseTaxRateFromText(val, fallback = 18) {
+  if (val === undefined || val === null || val === '') return fallback;
+  if (typeof val === 'number' && Number.isFinite(val)) return val;
+  const str = String(val).trim();
+  if (/exempt|nil|zero|0\s*%/i.test(str)) return 0;
+  const m = str.match(/(\d+(?:\.\d+)?)\s*%?/);
+  if (m) {
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n >= 0 && n <= 100) return n;
+  }
+  return fallback;
+}
+
 function normalizeRawBusyRow(row = {}, sourceFile = '', rowIndex = 1) {
+  const xmlTag = String(row._xmlTag || '').trim().toLowerCase();
+  const xmlMapped = BUSY_XML_TAG_MAP[xmlTag];
+
   const rawCategory = String(getField(row, ['recordCategory', 'categoryType', 'kind', '_section']) || '').trim();
-  const rawType = String(getField(row, ['recordType', 'masterType', 'voucherType', 'txnType', 'type', 'vchType']) || '').trim();
+  let rawType = String(getField(row, ['recordType', 'masterType', 'voucherType', 'txnType', 'type', 'vchType']) || '').trim();
+
+  // If rawType is a numeric BUSY MasterType code (e.g., "1", "2", "6"), map it or prefer the explicit XML tag
+  if (BUSY_NUMERIC_MASTER_CODE_MAP[rawType]) {
+    rawType = xmlMapped ? xmlMapped.subType : BUSY_NUMERIC_MASTER_CODE_MAP[rawType];
+  } else if (xmlMapped && (!rawType || /^\d+$/.test(rawType))) {
+    rawType = xmlMapped.subType;
+  }
 
   // Determine whether Master or Transaction
-  let domain = 'Master';
-  let subType = 'Item';
+  let domain = xmlMapped?.domain || 'Master';
+  let subType = xmlMapped?.subType || 'Item';
 
   const typeNorm = rawType.toLowerCase();
   const catNorm = rawCategory.toLowerCase();
 
   if (
+    xmlMapped?.domain === 'Transaction' ||
     catNorm.includes('tran') ||
     catNorm.includes('vouch') ||
     catNorm.includes('txn') ||
     BUSY_SUPPORTED_TXN_TYPES.some(t => t.toLowerCase() === typeNorm) ||
     BUSY_UNSUPPORTED_TXN_TYPES.some(t => t.toLowerCase() === typeNorm) ||
-    Boolean(getField(row, ['voucherNo', 'invoiceNumber', 'billNumber', 'vchNo']))
+    Boolean(getField(row, ['voucherNo', 'invoiceNumber', 'billNumber', 'vchNo', 'vchNumber']))
   ) {
     domain = 'Transaction';
     const matchedSup = BUSY_SUPPORTED_TXN_TYPES.find(t => t.toLowerCase() === typeNorm);
     const matchedUnsup = BUSY_UNSUPPORTED_TXN_TYPES.find(t => t.toLowerCase() === typeNorm);
-    if (matchedSup) subType = matchedSup;
+    if (xmlMapped?.domain === 'Transaction') subType = xmlMapped.subType;
+    else if (matchedSup) subType = matchedSup;
     else if (matchedUnsup) subType = matchedUnsup;
     else if (typeNorm.includes('sale') && typeNorm.includes('ret')) subType = 'Sales Return';
     else if (typeNorm.includes('pur') && typeNorm.includes('ret')) subType = 'Purchase Return';
@@ -286,7 +397,8 @@ function normalizeRawBusyRow(row = {}, sourceFile = '', rowIndex = 1) {
   } else {
     domain = 'Master';
     const matchedMaster = BUSY_MASTER_TYPES.find(m => m.toLowerCase() === typeNorm);
-    if (matchedMaster) subType = matchedMaster;
+    if (xmlMapped?.domain === 'Master') subType = xmlMapped.subType;
+    else if (matchedMaster) subType = matchedMaster;
     else if (typeNorm.includes('account') && typeNorm.includes('group')) subType = 'Account Group';
     else if (typeNorm.includes('account') || typeNorm.includes('party') || typeNorm.includes('customer') || typeNorm.includes('supplier') || typeNorm.includes('ledger')) subType = 'Account';
     else if (typeNorm.includes('item') && typeNorm.includes('group')) subType = 'Item Group';
@@ -295,10 +407,64 @@ function normalizeRawBusyRow(row = {}, sourceFile = '', rowIndex = 1) {
     else if (typeNorm.includes('tax')) subType = 'Tax Category';
     else if (typeNorm.includes('sundry')) subType = 'Bill Sundry';
     else if (typeNorm.includes('bom') || typeNorm.includes('material')) subType = 'Bill of Material';
-    else if (getField(row, ['oemPartNo', 'partNo', 'partNumber', 'mrp', 'sellingPrice', 'mechanicPrice', 'stock'])) subType = 'Item';
-    else if (getField(row, ['accountGroup', 'gstin', 'creditLimit', 'openingType'])) subType = 'Account';
-    else subType = rawType || 'Item';
+    else if (getField(row, ['oemPartNo', 'partNo', 'partNumber', 'mrp', 'sellingPrice', 'salePrice', 'salesPrice', 'purPrice', 'mechanicPrice', 'stock', 'opBalQty', 'opQty', 'clQty', 'hsnCode', 'taxCatName'])) subType = 'Item';
+    else if (getField(row, ['accountGroup', 'parentGroup', 'gstin', 'gstNo', 'creditLimit', 'openingType', 'opBal', 'openingBal'])) subType = 'Account';
+    else subType = rawType && !/^\d+$/.test(rawType) ? rawType : 'Item';
   }
+
+  // Extract address parts from BUSY XML (<Address1>, <Address2>, <Address3>, <Address4>, <Station>, <PinCode>)
+  const addrParts = [
+    getField(row, ['address', 'street', 'address1', 'addr1']),
+    getField(row, ['address2', 'addr2']),
+    getField(row, ['address3', 'addr3']),
+    getField(row, ['address4', 'addr4', 'station', 'city']),
+  ].map(s => String(s || '').trim()).filter(Boolean);
+  const combinedAddress = addrParts.join(', ');
+
+  // Opening / Closing Stock in BUSY XML (<OpBalQty>, <OpQty>, <OpStock>, <ClQty>, <ClBalQty>, <Stock>)
+  const openingStock = parseNum(getField(row, ['openingStock', 'openStock', 'opBalQty', 'opQty', 'opStock', 'openingQty']), 0);
+  const stock = parseNum(getField(row, ['stock', 'closingStock', 'clBalQty', 'clQty', 'qty', 'quantity', 'openingStock', 'opBalQty', 'opQty', 'opStock']), openingStock);
+  const opStockValue = parseNum(getField(row, ['opBalVal', 'opVal', 'openingStockVal', 'stockValue', 'clBalVal']), 0);
+
+  // Prices in BUSY XML (<SalePrice>, <SalesPrice>, <PurPrice>, <SelfValPrice>, <MRP>, <MinSalePrice>)
+  let purchasePrice = parseNum(getField(row, ['purchasePrice', 'costPrice', 'purchaseRate', 'purPrice', 'purRate', 'selfValPrice', 'stdPurPrice']), 0);
+  if (purchasePrice <= 0 && stock > 0 && opStockValue > 0) {
+    purchasePrice = Math.round((opStockValue / stock) * 100) / 100;
+  }
+  const mrp = parseNum(getField(row, ['mrp', 'itemMrp', 'maxRetailPrice']), 0);
+  let sellingPrice = parseNum(getField(row, ['sellingPrice', 'salePrice', 'salesPrice', 'saleRate', 'stdSalePrice', 'rate', 'retailPrice']), 0);
+  if (sellingPrice <= 0 && mrp > 0) sellingPrice = mrp;
+  if (sellingPrice <= 0 && purchasePrice > 0) sellingPrice = purchasePrice;
+
+  const mechanicPrice = parseNum(getField(row, ['mechanicPrice', 'workshopPrice', 'minSalePrice', 'splPrice']), 0);
+  const wholesalePrice = parseNum(getField(row, ['wholesalePrice', 'dealerPrice']), 0);
+
+  // Opening balance for Accounts in BUSY XML (<OpBal>, <OpeningBal>, <OpBalDr>, <OpBalCr>)
+  const rawOpBal = parseNum(getField(row, ['openingBalance', 'openBal', 'opBal', 'openingBal', 'opBalance']), 0);
+  const opBalDr = parseNum(getField(row, ['opBalDr', 'debitOpening']), 0);
+  const opBalCr = parseNum(getField(row, ['opBalCr', 'creditOpening']), 0);
+  let openingBalance = Math.abs(rawOpBal);
+  let openingType = String(getField(row, ['openingType', 'drCr', 'opBalType', 'balType']) || '').trim();
+  if (opBalDr > 0) {
+    openingBalance = opBalDr;
+    openingType = 'Dr';
+  } else if (opBalCr > 0) {
+    openingBalance = opBalCr;
+    openingType = 'Cr';
+  } else if (!openingType) {
+    const grpLower = String(getField(row, ['accountGroup', 'parentGroup', 'groupName', 'group']) || '').toLowerCase();
+    if (rawOpBal < 0 || grpLower.includes('creditor') || grpLower.includes('supplier') || grpLower.includes('liability') || grpLower.includes('payable')) {
+      openingType = 'Cr';
+    } else {
+      openingType = 'Dr';
+    }
+  }
+
+  const rawTaxField = getField(row, ['taxPercent', 'gstRate', 'taxRate', 'taxCatName', 'taxCategory', 'gstPercent']);
+  const taxPercent = parseTaxRateFromText(rawTaxField, 18);
+
+  const codeVal = String(getField(row, ['code', 'itemCode', 'accountCode', 'alias', 'aliasName', 'shortName', 'sku', 'printName']) || '').trim();
+  const oemVal = String(getField(row, ['oemPartNo', 'partNo', 'partNumber', 'oemNo', 'alias', 'code', 'itemCode']) || '').trim();
 
   return {
     sourceId: `${sourceFile}#${rowIndex}`,
@@ -306,54 +472,58 @@ function normalizeRawBusyRow(row = {}, sourceFile = '', rowIndex = 1) {
     rowIndex,
     domain,
     subType,
-    name: String(getField(row, ['name', 'itemName', 'accountName', 'partyName', 'particulars']) || '').trim(),
-    code: String(getField(row, ['code', 'itemCode', 'accountCode', 'alias', 'sku']) || '').trim(),
-    oemPartNo: String(getField(row, ['oemPartNo', 'partNo', 'partNumber', 'oemNo']) || '').trim(),
-    mfgPartNo: String(getField(row, ['mfgPartNo', 'manufacturerPartNo']) || '').trim(),
-    altPartNo: String(getField(row, ['altPartNo', 'alternatePartNo']) || '').trim(),
-    barcode: String(getField(row, ['barcode', 'ean']) || '').trim(),
-    brand: String(getField(row, ['brand', 'makeBrand']) || '').trim(),
-    manufacturer: String(getField(row, ['manufacturer', 'mfg']) || '').trim(),
-    category: String(getField(row, ['category', 'itemGroup', 'productGroup', 'group']) || '').trim(),
-    accountGroup: String(getField(row, ['accountGroup', 'parentGroup', 'group']) || '').trim(),
-    customerType: String(getField(row, ['customerType', 'partyType']) || 'Retail').trim(),
-    hsn: String(getField(row, ['hsn', 'hsnCode', 'sac']) || '').trim(),
-    gstin: String(getField(row, ['gstin', 'gstNo']) || '').trim().toUpperCase(),
-    phone: String(getField(row, ['phone', 'mobile', 'contact']) || '').trim(),
-    email: String(getField(row, ['email']) || '').trim(),
-    address: String(getField(row, ['address', 'street']) || '').trim(),
-    state: String(getField(row, ['state']) || '').trim(),
-    unit: String(getField(row, ['unit', 'uom']) || 'Nos').trim(),
-    taxPercent: Number(getField(row, ['taxPercent', 'gstRate', 'taxRate']) || 18),
-    purchasePrice: Number(getField(row, ['purchasePrice', 'costPrice', 'purchaseRate']) || 0),
-    mrp: Number(getField(row, ['mrp']) || 0),
-    sellingPrice: Number(getField(row, ['sellingPrice', 'salePrice', 'rate', 'retailPrice']) || 0),
-    mechanicPrice: Number(getField(row, ['mechanicPrice', 'workshopPrice']) || 0),
-    wholesalePrice: Number(getField(row, ['wholesalePrice', 'dealerPrice']) || 0),
-    openingStock: Number(getField(row, ['openingStock', 'openStock']) || 0),
-    stock: Number(getField(row, ['stock', 'closingStock', 'qty', 'quantity', 'openingStock']) || 0),
-    minStock: Number(getField(row, ['minStock', 'reorderLevel']) || 5),
-    rack: String(getField(row, ['rack', 'rackNo']) || '').trim(),
-    binLocation: String(getField(row, ['binLocation', 'bin', 'location']) || '').trim(),
-    vehicleMake: String(getField(row, ['vehicleMake', 'make']) || '').trim(),
-    vehicleModel: String(getField(row, ['vehicleModel', 'model']) || '').trim(),
-    vehicleYear: String(getField(row, ['vehicleYear', 'year']) || '').trim(),
+    name: String(getField(row, ['name', 'itemName', 'accountName', 'partyName', 'printName', 'particulars']) || '').trim(),
+    code: codeVal,
+    oemPartNo: oemVal,
+    mfgPartNo: String(getField(row, ['mfgPartNo', 'manufacturerPartNo', 'catNo', 'catalogueNo']) || '').trim(),
+    altPartNo: String(getField(row, ['altPartNo', 'alternatePartNo', 'desc2', 'description2']) || '').trim(),
+    barcode: String(getField(row, ['barcode', 'ean', 'itemBarcode']) || '').trim(),
+    brand: String(getField(row, ['brand', 'makeBrand', 'itemGroup', 'groupName', 'parentGroup']) || '').trim(),
+    manufacturer: String(getField(row, ['manufacturer', 'mfg', 'brand']) || '').trim(),
+    category: String(getField(row, ['category', 'itemGroup', 'productGroup', 'groupName', 'parentGroup', 'group']) || '').trim(),
+    accountGroup: String(getField(row, ['accountGroup', 'parentGroup', 'groupName', 'group']) || '').trim(),
+    customerType: String(getField(row, ['customerType', 'partyType', 'dealerType']) || 'Retail').trim(),
+    hsn: String(getField(row, ['hsn', 'hsnCode', 'hsnCodeMaster', 'hsnSac', 'sac']) || '').trim(),
+    gstin: (() => {
+      const g = String(getField(row, ['gstin', 'gstNo', 'tinNo']) || '').trim().toUpperCase();
+      if (!g || /^(URP|UNREGISTERED|NA|N\/A|NIL|NONE|0|-+)$/i.test(g)) return '';
+      return g;
+    })(),
+    phone: String(getField(row, ['phone', 'mobile', 'mobileNo', 'telNo', 'whatsAppNo', 'contact']) || '').trim(),
+    email: String(getField(row, ['email', 'emailId', 'eMail']) || '').trim(),
+    address: combinedAddress,
+    state: String(getField(row, ['state', 'stateName', 'posState']) || '').trim(),
+    unit: String(getField(row, ['unit', 'uom', 'unitName', 'mainUnit', 'altUnit']) || 'Nos').trim(),
+    taxPercent,
+    purchasePrice,
+    mrp,
+    sellingPrice,
+    mechanicPrice,
+    wholesalePrice,
+    openingStock,
+    stock,
+    minStock: parseNum(getField(row, ['minStock', 'reorderLevel', 'minLevel', 'criticalLevel']), 5),
+    rack: String(getField(row, ['rack', 'rackNo', 'storageLocation']) || '').trim(),
+    binLocation: String(getField(row, ['binLocation', 'bin', 'location', 'godown', 'materialCentre']) || '').trim(),
+    vehicleMake: String(getField(row, ['vehicleMake', 'make', 'desc1']) || '').trim(),
+    vehicleModel: String(getField(row, ['vehicleModel', 'model', 'desc3']) || '').trim(),
+    vehicleYear: String(getField(row, ['vehicleYear', 'year', 'desc4']) || '').trim(),
     fuelType: String(getField(row, ['fuelType', 'fuel']) || '').trim(),
-    openingBalance: Number(getField(row, ['openingBalance', 'openBal']) || 0),
-    openingType: String(getField(row, ['openingType', 'drCr']) || 'Dr').trim(),
-    creditLimit: Number(getField(row, ['creditLimit']) || 0),
-    creditDays: Number(getField(row, ['creditDays']) || 0),
+    openingBalance,
+    openingType,
+    creditLimit: parseNum(getField(row, ['creditLimit', 'crLimit']), 0),
+    creditDays: parseNum(getField(row, ['creditDays', 'creditDaysForSale', 'creditDaysForPur', 'crDays']), 0),
     // Transaction fields
-    voucherNo: String(getField(row, ['voucherNo', 'vchNo', 'invoiceNumber', 'billNumber']) || '').trim(),
-    date: String(getField(row, ['date', 'voucherDate', 'invoiceDate']) || '').trim(),
-    partyName: String(getField(row, ['partyName', 'clientName', 'supplierName', 'accountName']) || '').trim(),
-    amount: Number(getField(row, ['amount', 'totalAmount', 'netAmount']) || 0),
-    taxAmount: Number(getField(row, ['taxAmount', 'gstAmount', 'igst', 'cgst']) || 0),
+    voucherNo: String(getField(row, ['voucherNo', 'vchNo', 'vchNumber', 'invoiceNumber', 'billNumber', 'billNo', 'docNo']) || '').trim(),
+    date: String(getField(row, ['date', 'voucherDate', 'vchDate', 'invoiceDate', 'billDate']) || '').trim(),
+    partyName: String(getField(row, ['partyName', 'clientName', 'supplierName', 'accountName', 'party']) || '').trim(),
+    amount: parseNum(getField(row, ['amount', 'totalAmount', 'netAmount', 'vchAmount', 'billAmount', 'grandTotal']), 0),
+    taxAmount: parseNum(getField(row, ['taxAmount', 'gstAmount', 'totTaxAmt', 'igst', 'cgst']), 0),
     itemName: String(getField(row, ['itemName', 'productName']) || '').trim(),
-    quantity: Number(getField(row, ['quantity', 'qty']) || 1),
-    rate: Number(getField(row, ['rate', 'price']) || 0),
-    paymentMode: String(getField(row, ['paymentMode', 'mode']) || 'Cash').trim(),
-    narration: String(getField(row, ['narration', 'notes', 'remarks']) || '').trim(),
+    quantity: parseNum(getField(row, ['quantity', 'qty', 'billedQty']), 1),
+    rate: parseNum(getField(row, ['rate', 'price', 'itemRate']), 0),
+    paymentMode: String(getField(row, ['paymentMode', 'mode', 'settlementMode']) || 'Cash').trim(),
+    narration: String(getField(row, ['narration', 'notes', 'remarks', 'longNarration']) || '').trim(),
     raw: row,
   };
 }
@@ -538,7 +708,31 @@ export function reconcileBusyImport({
       if (rec.subType === 'Account' || rec.subType === 'Opening Balance' || rec.subType === 'Bill-by-Bill Reference') {
         const grp = rec.accountGroup.toLowerCase();
         const isSupplier = grp.includes('creditor') || grp.includes('supplier') || grp.includes('vendor');
-        const isClient = grp.includes('debtor') || grp.includes('customer') || grp.includes('client') || (!isSupplier && ['Retail', 'Mechanic', 'Garage', 'Workshop', 'Wholesaler', 'Dealer'].includes(rec.customerType));
+        const isLedgerGroup =
+          grp.includes('bank') ||
+          grp.includes('cash') ||
+          grp.includes('expense') ||
+          grp.includes('income') ||
+          grp.includes('revenue') ||
+          grp.includes('duty') ||
+          grp.includes('duties') ||
+          grp.includes('tax') ||
+          grp.includes('sale') ||
+          grp.includes('purchase') ||
+          grp.includes('capital') ||
+          grp.includes('loan') ||
+          grp.includes('asset') ||
+          grp.includes('liabilit') ||
+          grp.includes('branch') ||
+          grp.includes('suspense') ||
+          grp.includes('provision') ||
+          grp.includes('reserve') ||
+          grp.includes('stock');
+        const isClient =
+          grp.includes('debtor') ||
+          grp.includes('customer') ||
+          grp.includes('client') ||
+          (!isSupplier && !isLedgerGroup && ['Retail', 'Mechanic', 'Garage', 'Workshop', 'Wholesaler', 'Dealer'].includes(rec.customerType));
 
         if (isSupplier) {
           const existing = supplierByName.get(rec.name.toLowerCase());
@@ -821,9 +1015,9 @@ Master|Item|Front Disc Brake Pad Set Swift/Dzire|BP-MS-02|55810M75J00|TVS-5581|B
 Master|Item|Spin-On Engine Oil Filter Creta/Seltos 1.5 CRDi|OF-HY-09|26300-35505|MH-W811/80|PURO-L19|Mann Filter|Mann+Hummel|Filters & Fluids|84212300|Nos|18|210|395|340|295|265|45|45|10|R-B2|BIN-204|Hyundai|Creta / Verna|2020-2025|Diesel|Filters & Fluids|||||||0|Dr|0|0
 Master|Item|Clutch Plate & Cover Assembly Bolero mHawk|CL-MM-04|0801CAA04591N|VAL-402118|LUK-6223|Valeo|Valeo India|Clutch & Transmission|87089300|Kit|28|3450|5890|4950|4450|4150|8|8|3|R-C3|BIN-309|Mahindra|Bolero / Scorpio|2017-2024|Diesel|Clutch & Transmission|||||||0|Dr|0|0
 Master|Item|Front Shock Absorber Strut LH Nexon|SA-TT-11|543832100101|GAB-G5109|MNR-334|Gabriel|Gabriel India|Suspension & Steering|87088000|Nos|18|1720|2850|2420|2150|1980|12|12|4|R-D1|BIN-401|Tata|Nexon|2019-2025|Petrol|Suspension & Steering|||||||0|Dr|0|0
-Master|Account|Sharma Auto Garage & Service Centre|CUST-101|||||||||||||||||||||||||Sundry Debtors|Workshop|07AABCS1429B1Z1|9811223344|Delhi|18500|Dr|75000|30
-Master|Account|Highway Motors Wholesale Spares|CUST-102|||||||||||||||||||||||||Sundry Debtors|Wholesaler|06AABCH8821C1Z8|9818009911|Haryana|42000|Dr|200000|45
-Master|Account|Kashmere Gate OEM Distributors Pvt Ltd|SUP-201|||||||||||||||||||||||||Sundry Creditors|Supplier|07AAACK5519P1Z3|9810112233|Delhi|64000|Cr|500000|45
+Master|Account|Sharma Auto Garage & Service Centre|CUST-101||||||||||||||||||||||||Sundry Debtors|Workshop|07AABCS1429B1Z1|9811223344|Delhi|18500|Dr|75000|30
+Master|Account|Highway Motors Wholesale Spares|CUST-102||||||||||||||||||||||||Sundry Debtors|Wholesaler|06AABCH8821C1Z8|9818009911|Haryana|42000|Dr|200000|45
+Master|Account|Kashmere Gate OEM Distributors Pvt Ltd|SUP-201||||||||||||||||||||||||Sundry Creditors|Supplier|07AAACK5519P1Z3|9810112233|Delhi|64000|Cr|500000|45
 Master|Tax Category|GST 18% Auto Spares|TAX-18|||||||||18||||||||||||||||||||||0|Cr|0|0
 Master|Unit|Set of 4 Pieces|UOM-SET||||||||Set|||||||||||||||||||||||0|Dr|0|0`;
 

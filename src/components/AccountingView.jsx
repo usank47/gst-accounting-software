@@ -24,8 +24,9 @@ import {
 } from '../utils/accounting';
 import { formatCurrency } from '../utils';
 import { writeXlsxFile } from '../utils/xlsx';
+import { toast } from './Toast';
 
-export default function AccountingView({ showToast, initialTab = 'vouchers', initialVoucherType = '' }) {
+export default function AccountingView({ showToast = toast, initialTab = 'vouchers', initialVoucherType = '' }) {
   const [activeTab, setActiveTab] = useState(initialTab || 'vouchers'); // 'vouchers' | 'ledgers' | 'suppliers' | 'trial' | 'pnl' | 'bs' | 'ageing'
   const [bills, setBills] = useState([]);
   const [purchases, setPurchases] = useState([]);

@@ -17,8 +17,9 @@ import {
   productMatchesSearch,
 } from '../utils/products';
 import { formatCurrency, stockEffect, businessKeyOf, isCancelledBill } from '../utils';
+import { toast } from './Toast';
 
-export default function POSView({ showToast, onOpenFullInvoice }) {
+export default function POSView({ showToast = toast, onOpenFullInvoice }) {
   const [products, setProducts] = useState([]);
   const [clients, setClients] = useState([]);
   const [bills, setBills] = useState([]);

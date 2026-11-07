@@ -30,6 +30,7 @@
   --bg-primary: #f0f2f5;
   --bg-secondary: #f8fafc;       /* card / inset surface — light grey on light, dark slate on dark */
   --bg-tertiary: #f1f5f9;        /* hover / selected inset */
+  --bg-hover: rgba(37, 99, 235, 0.08);
   --card-bg: rgba(255, 255, 255, 0.92);
   --text: #111827;
   --text-primary: #111827;       /* alias used by newer components */
@@ -49,6 +50,8 @@
   --glass-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
   --success: #059669;
   --success-light: rgba(5, 150, 105, 0.08);
+  --warning: #d97706;
+  --warning-light: rgba(217, 119, 6, 0.1);
   --danger: #dc2626;
   --danger-light: rgba(220, 38, 38, 0.08);
   --purple: #7c3aed;
@@ -69,6 +72,7 @@
   --bg-primary: #0f172a;
   --bg-secondary: #1e293b;       /* card / inset surface in dark mode */
   --bg-tertiary: #334155;
+  --bg-hover: rgba(59, 130, 246, 0.16);
   --card-bg: rgba(30, 41, 59, 0.92);
   --text: #f1f5f9;
   --text-primary: #f1f5f9;
@@ -88,6 +92,8 @@
   --glass-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
   --success: #34d399;
   --success-light: rgba(52, 211, 153, 0.12);
+  --warning: #fbbf24;
+  --warning-light: rgba(251, 191, 36, 0.14);
   --danger: #f87171;
   --danger-light: rgba(248, 113, 113, 0.12);
   --purple: #a78bfa;
@@ -3622,3 +3628,118 @@ html:not([data-theme="dark"]) .welcome-card-close:hover { background: rgba(15, 2
   .welcome-card h2 { font-size: 1.2rem; }
   .welcome-card-btn { flex: 1 1 100%; justify-content: center; }
 }
+
+/* Modal, Card, Stat & Tag classes used by BUSY Import, Inventory, Accounting, POS & Bill OCR */
+.modal {
+  background: #ffffff;
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 1.35rem 1.5rem;
+  width: 94%;
+  max-width: 720px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35), 0 4px 16px rgba(15, 23, 42, 0.12);
+  position: relative;
+}
+[data-theme="dark"] .modal {
+  background: #1e293b;
+  color: #f1f5f9;
+  border-color: #334155;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding-bottom: 0.85rem;
+  margin-bottom: 0.85rem;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.modal-title {
+  margin: 0 0 0.2rem 0;
+  font-size: 1.18rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.modal-close {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.modal-close:hover {
+  background: var(--danger-light);
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.modal-footer {
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.glass-card {
+  background: #ffffff;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+[data-theme="dark"] .glass-card {
+  background: #0f172a;
+  border-color: #334155;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 6px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  line-height: 1.35;
+}
+
+.stat-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+  box-shadow: var(--glass-shadow);
+}
+.stat-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  margin-bottom: 0.25rem;
+}
+.stat-value {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
