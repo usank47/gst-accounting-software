@@ -26,7 +26,7 @@ export default function BusyImportModal({ onClose, onImportCompleted, showToast 
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [detectedMeta, setDetectedMeta] = useState([]);
   const [parsedRecords, setParsedRecords] = useState([]);
-  const [duplicatePolicy, setDuplicatePolicy] = useState('skip'); // 'skip' | 'update' | 'keep_both'
+  const [duplicatePolicy, setDuplicatePolicy] = useState('update'); // 'skip' | 'update' | 'keep_both'
   const [reconciliation, setReconciliation] = useState(null);
   const [existingData, setExistingData] = useState({
     clients: [],
@@ -375,8 +375,8 @@ export default function BusyImportModal({ onClose, onImportCompleted, showToast 
                       value={duplicatePolicy}
                       onChange={e => setDuplicatePolicy(e.target.value)}
                     >
+                      <option value="update">Update Existing Records (Recommended)</option>
                       <option value="skip">Skip Existing Duplicates (Safe)</option>
-                      <option value="update">Update Existing Records</option>
                       <option value="keep_both">Import Both as Separate</option>
                     </select>
                   </div>
@@ -467,7 +467,7 @@ export default function BusyImportModal({ onClose, onImportCompleted, showToast 
                         <th>Row</th>
                         <th>Domain / BUSY Type</th>
                         <th>Name / Party / Item</th>
-                        <th>OEM Part No / Voucher No</th>
+                        <th>OEM Part No (Alias) / Voucher No</th>
                         <th>Brand / Group</th>
                         <th>Stock / Amount</th>
                         <th>Classification Status</th>
@@ -482,7 +482,7 @@ export default function BusyImportModal({ onClose, onImportCompleted, showToast 
                             <strong>{row.domain}</strong>: {row.subType}
                           </td>
                           <td style={{ fontWeight: 600 }}>{row.name || row.partyName || row.itemName || '—'}</td>
-                          <td><code>{row.oemPartNo || row.voucherNo || row.code || '—'}</code></td>
+                          <td><code>{row.alias || row.oemPartNo || row.voucherNo || row.code || '—'}</code></td>
                           <td>{row.brand || row.accountGroup || row.category || '—'}</td>
                           <td>
                             {row.domain === 'Master' && row.subType === 'Item'

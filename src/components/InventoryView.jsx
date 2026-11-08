@@ -19,6 +19,7 @@ import {
   PART_TYPES,
   FUEL_TYPES,
   normalizeAutomotiveProduct,
+  isMisclassifiedAccountProduct,
   computeProductMargins,
   findDuplicateProducts,
   productMatchesSearch,
@@ -145,7 +146,11 @@ export default function InventoryView({ showToast = toast, initialAction, clearI
       getAllWarehouses(),
       getInventorySettings(),
     ]);
-    setProducts((prods || []).map(normalizeAutomotiveProduct));
+    setProducts(
+      (prods || [])
+        .filter(p => !isMisclassifiedAccountProduct(p))
+        .map(normalizeAutomotiveProduct)
+    );
     setBills(bls || []);
     setPurchases(purs || []);
     setVouchers(vchs || []);
@@ -1042,7 +1047,9 @@ export default function InventoryView({ showToast = toast, initialAction, clearI
                             )}
                           </td>
                           <td>
-                            <div style={{ fontFamily: 'monospace', fontWeight: 600 }}>{p.oemPartNo || '—'}</div>
+                            <div style={{ fontFamily: 'monospace', fontWeight: 600 }}>
+                              {p.oemPartNo || p.alias || p.itemCode || p.sku || '—'}
+                            </div>
                             {(p.mfgPartNo || p.altPartNo) && (
                               <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>
                                 {p.mfgPartNo ? `Mfg: ${p.mfgPartNo}` : ''} {p.altPartNo ? `Alt: ${p.altPartNo}` : ''}

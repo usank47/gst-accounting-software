@@ -455,9 +455,99 @@ app.delete('/api/templates/:id', (req, res) => {
 // ========================
 // PRODUCTS / INVENTORY
 // ========================
+const SERVER_KNOWN_ACCOUNT_GROUPS_RE = /\b(sundry\s*debtors?|sundry\s*creditors?|duties\s*(?:&|and)\s*taxes|current\s*assets?|current\s*liabilities|bank\s*accounts?|bank\s*o\/d|bank\s*od|cash[\s-]*in[\s-]*hand|expenses?\s*\(indirect|expenses?\s*\(direct|indirect\s*expenses?|direct\s*expenses?|income\s*\(indirect|income\s*\(direct|indirect\s*income|direct\s*income|revenue\s*accounts?|sales\s*accounts?|purchase\s*accounts?|fixed\s*assets?|capital\s*accounts?|loans?\s*\(liability\)|loans?\s*(?:&|and)\s*advances?|secured\s*loans?|unsecured\s*loans?|securities\s*(?:&|and)\s*deposits?|provisions?|reserves?\s*(?:&|and)\s*surplus|branch\s*\/?\s*divisions?|suspense\s*a\/c|suspense\s*account|stock[\s-]*in[\s-]*hand|investments?|misc\.?\s*expenses?|primary\s*group)\b/i;
+
+const SERVER_KNOWN_ACCOUNT_NAMES_RE = /^(add\.?\s*cess|cess\s+on\s+gst|cgst\s*(input|output|payable|receivable|on\s+|adjustable|a\/c|%|$)|sgst\s*(input|output|payable|receivable|on\s+|adjustable|a\/c|%|$)|igst\s*(input|output|payable|receivable|on\s+|adjustable|a\/c|%|$)|utgst|gst\s+(input|output|payable|receivable|adjustable)|central\s+sales\s+tax|vat\s+(input|output|payable)|service\s+tax|tds\s+(payable|receivable|on\s+|by\s+)|tcs\s+(payable|receivable|on\s+|by\s+)|busy\s+infotech|advertisement\s*(?:&|and)\s*publicity|audit\s+fees?|bad\s+debts?\s*(written\s+off)?|bank\s+charges?|bank\s+interest|books\s*(?:&|and)\s*periodicals|cash$|cash\s+in\s+hand|cash\s+a\/c|charity\s*(?:&|and)\s*donations?|commission\s+on\s+(sales|purchases)|computers?$|conveyance\s+expenses?|customer\s+entertainment\s+expenses?|depreciation\s*a\/c|depreciation\s+account|discount\s+(allowed|received|a\/c)|donations?$|earnest\s+money|electricity\s+(charges?|expenses?)|entertainment\s+expenses?|festival\s+celebration\s+expenses?|freight\s*(?:&|and)\s*(cartage|forwarding|inward|outward)|furniture\s*(?:&|and)\s*fixtures?|general\s+expenses?|godown\s+rent|interest\s+on\s+(loan|od|capital|late\s+payment)|interest\s+(paid|received|a\/c)|job\s+work\s+charges?|labour\s+charges?|legal\s+expenses?|machinery\s*(?:&|and)\s*equipments?|medical\s+expenses?|membership\s*(?:&|and)\s*subscriptions?|misc\.?\s+expenses?|miscellaneous\s+expenses?|newspaper\s*(?:&|and)\s*periodicals|office\s+equipments?|office\s+expenses?|office\s+maint(ainance|enance)|packing\s+(charges?|expenses?)|penalty\s*(?:&|and)\s*fines?|petrol\s*(?:&|and)\s*diesel\s+expenses?|postage\s*(?:&|and)\s*(telegram|courier)|power\s*(?:&|and)\s*fuel|preliminary\s+expenses?|printing\s*(?:&|and)\s*station(ery|ary)|professional\s+(charges?|fees?)|profit\s*(?:&|and)\s*loss|provident\s+fund|purchase\s+account|rebate\s*(?:&|and)\s*discount|refreshment\s+expenses?|rent\s+(paid|received|a\/c|expenses?)|repair\s*(?:&|and)\s*maint|round(ing)?\s+off|salary\s*(?:&|and)\s*(bonus|wages)|sales\s+account|sales\s+promotion\s+expenses?|security\s+deposit|service\s+charges?|software\s+expenses?|staff\s+welfare\s+expenses?|station(ery|ary)\s+expenses?|sundry\s+(debtors?|creditors?)|suspense\s*(account|a\/c)?$|tea\s*(?:&|and)\s*coffee\s+expenses?|telephone\s+expenses?|tour\s*(?:&|and)\s*travelling|transport(ation)?\s+charges?|travelling\s*(?:&|and)?\s*(conveyance\s+)?expenses?|uniform\s+expenses?|vehicle\s+running\s*(?:&|and)?\s*maint|wages\s*(a\/c|expenses?)?$|water\s*(?:&|and)\s*electricity)/i;
+
+function sanitizeAndNormalizeProductsOnDisk() {
+  const rawProducts = readAllFromDir('products');
+  if (!rawProducts.length) return [];
+
+  const clients = readAllFromDir('clients');
+  const suppliers = readAllFromDir('suppliers');
+  const ledgers = readAllFromDir('ledgers');
+  const partyOrLedgerNames = new Set([
+    ...clients.map(c => String(c?.name || '').trim().toLowerCase()),
+    ...suppliers.map(s => String(s?.name || '').trim().toLowerCase()),
+    ...ledgers.map(l => String(l?.name || '').trim().toLowerCase()),
+  ].filter(Boolean));
+  const ledgerNameSet = new Set(ledgers.map(l => String(l?.name || '').trim().toLowerCase()).filter(Boolean));
+
+  const cleanProducts = [];
+
+  for (const p of rawProducts) {
+    if (!p || typeof p !== 'object') continue;
+    const name = String(p.name || '').trim();
+    const groupFields = [p.accountGroup, p.parentGroup, p.category, p.productGroup, p.brand, p.manufacturer]
+      .map(v => String(v || '').trim())
+      .filter(Boolean);
+    const hasNoProductPricing =
+      (Number(p.sellingPrice) || 0) === 0 &&
+      (Number(p.purchasePrice) || 0) === 0 &&
+      (Number(p.mrp) || 0) === 0 &&
+      !String(p.hsn || '').trim();
+
+    const isMisclassifiedAccount =
+      (p.subType && p.subType !== 'Item') ||
+      /^(Account Group|Tax Category|Bill Sundry|Sale Type|Purchase Type|Item Group|Material Centre):/i.test(name) ||
+      SERVER_KNOWN_ACCOUNT_NAMES_RE.test(name) ||
+      groupFields.some(g => SERVER_KNOWN_ACCOUNT_GROUPS_RE.test(g)) ||
+      (hasNoProductPricing && (p.gstin || (Number(p.openingBalance) || 0) > 0 || (Number(p.creditLimit) || 0) > 0)) ||
+      (hasNoProductPricing && (Number(p.stock) || 0) === 0 && partyOrLedgerNames.has(name.toLowerCase()));
+
+    if (isMisclassifiedAccount) {
+      // Remove from products directory
+      if (p.id) {
+        const prodPath = path.join(DATA_DIR, 'products', safeFileName(p.id) + '.json');
+        deleteFile(prodPath);
+      }
+      // Migrate to ledgers if not already present so accounting data is preserved
+      if (name && !ledgerNameSet.has(name.toLowerCase())) {
+        const matchedGroup = groupFields.find(g => SERVER_KNOWN_ACCOUNT_GROUPS_RE.test(g)) ||
+          (/cess|cgst|sgst|igst|utgst|gst|tax|tds|tcs|vat/i.test(name) ? 'Duties & Taxes' : 'Indirect Expenses');
+        const ldgId = `ldg_migrated_${safeFileName(p.id || name)}`;
+        const ldgObj = {
+          id: ldgId,
+          name,
+          code: p.itemCode || p.sku || p.code || '',
+          group: matchedGroup,
+          openingBalance: Number(p.openingBalance) || 0,
+          openingType: p.openingType || 'Dr',
+          importBatchId: p.importBatchId,
+          importedAt: p.importedAt || new Date().toISOString(),
+        };
+        writeJSON(path.join(DATA_DIR, 'ledgers', safeFileName(ldgId) + '.json'), ldgObj);
+        ledgerNameSet.add(name.toLowerCase());
+      }
+      continue;
+    }
+
+    // Backfill oemPartNo from alias / itemCode / sku (BUSY Alias field)
+    const rawAlias = String(p.alias || p.itemAlias || p.aliasName || '').trim();
+    const rawCode = String(p.itemCode || p.sku || p.code || '').trim();
+    const validCode = rawCode && rawCode.toLowerCase() !== name.toLowerCase() ? rawCode : '';
+    const resolvedOem = String(p.oemPartNo || rawAlias || p.partNo || p.partNumber || validCode || '').trim();
+    const resolvedAlias = String(rawAlias || resolvedOem || validCode || '').trim();
+
+    if ((resolvedOem && p.oemPartNo !== resolvedOem) || (resolvedAlias && p.alias !== resolvedAlias)) {
+      p.oemPartNo = resolvedOem;
+      p.partNo = resolvedOem;
+      p.alias = resolvedAlias;
+      if (!p.itemCode && resolvedAlias) p.itemCode = resolvedAlias;
+      if (p.id) {
+        writeJSON(path.join(DATA_DIR, 'products', safeFileName(p.id) + '.json'), p);
+      }
+    }
+
+    cleanProducts.push(p);
+  }
+
+  cleanProducts.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  return cleanProducts;
+}
+
 app.get('/api/products', (req, res) => {
-  const products = readAllFromDir('products');
-  products.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  const products = sanitizeAndNormalizeProductsOnDisk();
   res.json(products);
 });
 
@@ -1057,6 +1147,9 @@ app.post('/api/busy-imports/commit', (req, res) => {
     writeCollection('purchases', payload.purchases, 'purchases', 'pur');
     writeCollection('purchase-orders', payload.purchaseOrders, 'purchaseOrders', 'po');
     writeCollection('vouchers', payload.vouchers, 'vouchers', 'vch');
+
+    // Clean any previously misclassified accounts and backfill Alias -> oemPartNo on disk
+    sanitizeAndNormalizeProductsOnDisk();
 
     // Step 14: Verify database persistence by reading back from disk
     const verifiedOnDisk = {

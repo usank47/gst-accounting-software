@@ -45,8 +45,66 @@ export const FUEL_TYPES = ['Petrol', 'Diesel', 'CNG', 'Electric / EV', 'Hybrid',
 const cleanToken = (s) => String(s || '').trim().toUpperCase().replace(/[\s\-_/\\.]+/g, '');
 const cleanText = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
-// Normalize an automotive product record so UI and accounting always have consistent fields
+export const KNOWN_ACCOUNT_GROUPS_RE = /\b(sundry\s*debtors?|sundry\s*creditors?|duties\s*(?:&|and)\s*taxes|current\s*assets?|current\s*liabilities|bank\s*accounts?|bank\s*o\/d|bank\s*od|cash[\s-]*in[\s-]*hand|expenses?\s*\(indirect|expenses?\s*\(direct|indirect\s*expenses?|direct\s*expenses?|income\s*\(indirect|income\s*\(direct|indirect\s*income|direct\s*income|revenue\s*accounts?|sales\s*accounts?|purchase\s*accounts?|fixed\s*assets?|capital\s*accounts?|loans?\s*\(liability\)|loans?\s*(?:&|and)\s*advances?|secured\s*loans?|unsecured\s*loans?|securities\s*(?:&|and)\s*deposits?|provisions?|reserves?\s*(?:&|and)\s*surplus|branch\s*\/?\s*divisions?|suspense\s*a\/c|suspense\s*account|stock[\s-]*in[\s-]*hand|investments?|misc\.?\s*expenses?|primary\s*group)\b/i;
+
+export const KNOWN_ACCOUNT_NAMES_RE = /^(add\.?\s*cess|cess\s+on\s+gst|cgst\s*(input|output|payable|receivable|on\s+|adjustable|a\/c|%|$)|sgst\s*(input|output|payable|receivable|on\s+|adjustable|a\/c|%|$)|igst\s*(input|output|payable|receivable|on\s+|adjustable|a\/c|%|$)|utgst|gst\s+(input|output|payable|receivable| adjustable)|central\s+sales\s+tax|vat\s+(input|output|payable)|service\s+tax|tds\s+(payable|receivable|on\s+|by\s+)|tcs\s+(payable|receivable|on\s+|by\s+)|busy\s+infotech|advertisement\s*(?:&|and)\s*publicity|audit\s+fees?|bad\s+debts?\s*(written\s+off)?|bank\s+charges?|bank\s+interest|books\s*(?:&|and)\s*periodicals|cash$|cash\s+in\s+hand|cash\s+a\/c|charity\s*(?:&|and)\s*donations?|commission\s+on\s+(sales|purchases)|computers?$|conveyance\s+expenses?|customer\s+entertainment\s+expenses?|depreciation\s*a\/c|depreciation\s+account|discount\s+(allowed|received|a\/c)|donations?$|earnest\s+money|electricity\s+(charges?|expenses?)|entertainment\s+expenses?|festival\s+celebration\s+expenses?|freight\s*(?:&|and)\s*(cartage|forwarding|inward|outward)|furniture\s*(?:&|and)\s*fixtures?|general\s+expenses?|godown\s+rent|interest\s+on\s+(loan|od|capital|late\s+payment)|interest\s+(paid|received|a\/c)|job\s+work\s+charges?|labour\s+charges?|legal\s+expenses?|machinery\s*(?:&|and)\s*equipments?|medical\s+expenses?|membership\s*(?:&|and)\s*subscriptions?|misc\.?\s+expenses?|miscellaneous\s+expenses?|newspaper\s*(?:&|and)\s*periodicals|office\s+equipments?|office\s+expenses?|office\s+maint(ainance|enance)|packing\s+(charges?|expenses?)|penalty\s*(?:&|and)\s*fines?|petrol\s*(?:&|and)\s*diesel\s+expenses?|postage\s*(?:&|and)\s*(telegram|courier)|power\s*(?:&|and)\s*fuel|preliminary\s+expenses?|printing\s*(?:&|and)\s*station(ery|ary)|professional\s+(charges?|fees?)|profit\s*(?:&|and)\s*loss|provident\s+fund|purchase\s+account|rebate\s*(?:&|and)\s*discount|refreshment\s+expenses?|rent\s+(paid|received|a\/c|expenses?)|repair\s*(?:&|and)\s*maint|round(ing)?\s+off|salary\s*(?:&|and)\s*(bonus|wages)|sales\s+account|sales\s+promotion\s+expenses?|security\s+deposit|service\s+charges?|software\s+expenses?|staff\s+welfare\s+expenses?|station(ery|ary)\s+expenses?|sundry\s+(debtors?|creditors?)|suspense\s*(account|a\/c)?$|tea\s*(?:&|and)\s*coffee\s+expenses?|telephone\s+expenses?|tour\s*(?:&|and)\s*travelling|transport(ation)?\s+charges?|travelling\s*(?:&|and)?\s*(conveyance\s+)?expenses?|uniform\s+expenses?|vehicle\s+running\s*(?:&|and)?\s*maint|wages\s*(a\/c|expenses?)?$|water\s*(?:&|and)\s*electricity)/i;
+
+// Returns true if a record sitting in products is actually a BUSY Accounting ledger / party master
+export const isMisclassifiedAccountProduct = (p = {}, { clients = [], suppliers = [], ledgers = [] } = {}) => {
+  if (!p || typeof p !== 'object') return false;
+  const name = String(p.name || '').trim();
+  if (!name) return false;
+
+  // Explicit domain/subType marker if present
+  if (p.subType && p.subType !== 'Item') return true;
+  if (/^(Account Group|Tax Category|Bill Sundry|Sale Type|Purchase Type|Item Group|Material Centre):/i.test(name)) {
+    return true;
+  }
+
+  // Known standard BUSY account names (e.g. Add. Cess on GST Input, CGST Output, Cash, Busy Infotech, etc.)
+  if (KNOWN_ACCOUNT_NAMES_RE.test(name)) return true;
+
+  // Known accounting group stored in accountGroup, parentGroup, category, productGroup, or brand
+  const groupFields = [p.accountGroup, p.parentGroup, p.category, p.productGroup, p.brand, p.manufacturer]
+    .map(v => String(v || '').trim())
+    .filter(Boolean);
+  if (groupFields.some(g => KNOWN_ACCOUNT_GROUPS_RE.test(g))) return true;
+
+  // Account-only attributes present with zero product pricing/HSN
+  const hasNoProductPricing =
+    num(p.sellingPrice) === 0 &&
+    num(p.purchasePrice) === 0 &&
+    num(p.mrp) === 0 &&
+    !String(p.hsn || '').trim();
+
+  if (hasNoProductPricing && (p.gstin || num(p.openingBalance) > 0 || num(p.creditLimit) > 0)) {
+    return true;
+  }
+
+  if (hasNoProductPricing && num(p.stock) === 0) {
+    const lowerName = name.toLowerCase();
+    const inPartiesOrLedgers =
+      clients.some(c => String(c?.name || '').trim().toLowerCase() === lowerName) ||
+      suppliers.some(s => String(s?.name || '').trim().toLowerCase() === lowerName) ||
+      ledgers.some(l => String(l?.name || '').trim().toLowerCase() === lowerName);
+    if (inPartiesOrLedgers) return true;
+  }
+
+  return false;
+};
+
+// Normalize an automotive product record so UI and accounting always have consistent fields.
+// In BUSY Accounting, the Alias field holds the Spare Part Number and maps to oemPartNo.
 export const normalizeAutomotiveProduct = (p = {}) => {
+  const name = String(p.name || '').trim();
+  const rawAlias = String(p.alias || p.itemAlias || p.aliasName || p.masterAlias || '').trim();
+  const rawCode = String(p.itemCode || p.sku || p.code || '').trim();
+  // Avoid using internal printName/name as part code
+  const validCode = rawCode && rawCode.toLowerCase() !== name.toLowerCase() ? rawCode : '';
+  const oemPartNo = String(p.oemPartNo || rawAlias || p.partNo || p.partNumber || validCode || '').trim();
+  const alias = String(rawAlias || oemPartNo || validCode || '').trim();
+  const itemCode = String(validCode || rawAlias || oemPartNo || '').trim();
+
   const sellingPrice = num(p.sellingPrice ?? p.rate);
   const purchasePrice = num(p.purchasePrice);
   const stock = isServiceProduct(p) || p.stock === undefined || p.stock === null || p.stock === ''
@@ -57,12 +115,14 @@ export const normalizeAutomotiveProduct = (p = {}) => {
 
   return {
     ...p,
-    name: String(p.name || '').trim(),
-    itemCode: String(p.itemCode || p.sku || '').trim(),
-    oemPartNo: String(p.oemPartNo || p.partNo || '').trim(),
+    name,
+    alias,
+    itemCode,
+    oemPartNo,
+    partNo: oemPartNo,
     mfgPartNo: String(p.mfgPartNo || '').trim(),
     altPartNo: String(p.altPartNo || '').trim(),
-    sku: String(p.sku || p.itemCode || '').trim(),
+    sku: String(p.sku || itemCode || '').trim(),
     barcode: String(p.barcode || '').trim(),
     hsn: String(p.hsn || '').trim(),
     description: String(p.description || '').trim(),
@@ -300,6 +360,7 @@ export const productMatchesSearch = (product, query) => {
   const q = String(query).trim().toLowerCase();
   const fields = [
     product.name,
+    product.alias,
     product.itemCode,
     product.oemPartNo,
     product.partNo,

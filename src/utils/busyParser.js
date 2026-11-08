@@ -1,5 +1,10 @@
 // BUSY Accounting Software (.DAT / .XLSX / .CSV / .JSON) Parser, Classifier & Mathematical Reconciler
-import { findDuplicateProducts, normalizeAutomotiveProduct } from './products.js';
+import {
+  findDuplicateProducts,
+  normalizeAutomotiveProduct,
+  KNOWN_ACCOUNT_GROUPS_RE,
+  KNOWN_ACCOUNT_NAMES_RE,
+} from './products.js';
 
 export const BUSY_MASTER_TYPES = [
   'Account',
@@ -145,13 +150,13 @@ function decodeXmlEntities(str = '') {
 
 // BUSY numeric MasterType codes used inside <MasterType> or <Type> in BUSY .DAT exports
 const BUSY_NUMERIC_MASTER_CODE_MAP = {
-  '1': 'Account Group',
+  '1': 'Account',
   '2': 'Account',
   '3': 'Cost Centre',
-  '4': 'Standard Narration',
+  '4': 'Standard Narrations',
   '5': 'Item Group',
   '6': 'Item',
-  '7': 'Material Centre',
+  '7': 'Unit',
   '8': 'Unit',
   '9': 'Bill Sundry',
   '11': 'Sale Type',
@@ -355,6 +360,11 @@ function normalizeRawBusyRow(row = {}, sourceFile = '', rowIndex = 1) {
     rawType = xmlMapped.subType;
   }
 
+  const nameVal = String(getField(row, ['name', 'itemName', 'accountName', 'partyName', 'printName', 'particulars']) || '').trim();
+  const accountGroupVal = String(getField(row, ['accountGroup', 'parentGroup', 'parentGrp', 'groupName', 'grpName', 'accGrp', 'underGroup', 'underGrp', 'masterGroup', 'group']) || '').trim();
+  const hasKnownAccountGroup = Boolean(accountGroupVal && KNOWN_ACCOUNT_GROUPS_RE.test(accountGroupVal));
+  const hasKnownAccountName = Boolean(nameVal && KNOWN_ACCOUNT_NAMES_RE.test(nameVal));
+
   // Determine whether Master or Transaction
   let domain = xmlMapped?.domain || 'Master';
   let subType = xmlMapped?.subType || 'Item';
@@ -397,19 +407,56 @@ function normalizeRawBusyRow(row = {}, sourceFile = '', rowIndex = 1) {
   } else {
     domain = 'Master';
     const matchedMaster = BUSY_MASTER_TYPES.find(m => m.toLowerCase() === typeNorm);
-    if (xmlMapped?.domain === 'Master') subType = xmlMapped.subType;
-    else if (matchedMaster) subType = matchedMaster;
-    else if (typeNorm.includes('account') && typeNorm.includes('group')) subType = 'Account Group';
-    else if (typeNorm.includes('account') || typeNorm.includes('party') || typeNorm.includes('customer') || typeNorm.includes('supplier') || typeNorm.includes('ledger')) subType = 'Account';
-    else if (typeNorm.includes('item') && typeNorm.includes('group')) subType = 'Item Group';
-    else if (typeNorm.includes('unit') && typeNorm.includes('conv')) subType = 'Unit Conversion';
-    else if (typeNorm.includes('unit')) subType = 'Unit';
-    else if (typeNorm.includes('tax')) subType = 'Tax Category';
-    else if (typeNorm.includes('sundry')) subType = 'Bill Sundry';
-    else if (typeNorm.includes('bom') || typeNorm.includes('material')) subType = 'Bill of Material';
-    else if (getField(row, ['oemPartNo', 'partNo', 'partNumber', 'mrp', 'sellingPrice', 'salePrice', 'salesPrice', 'purPrice', 'mechanicPrice', 'stock', 'opBalQty', 'opQty', 'clQty', 'hsnCode', 'taxCatName'])) subType = 'Item';
-    else if (getField(row, ['accountGroup', 'parentGroup', 'gstin', 'gstNo', 'creditLimit', 'openingType', 'opBal', 'openingBal'])) subType = 'Account';
-    else subType = rawType && !/^\d+$/.test(rawType) ? rawType : 'Item';
+    const hasPositiveItemPricingOrStock =
+      parseNum(getField(row, ['mrp', 'sellingPrice', 'salePrice', 'salesPrice', 'purPrice', 'purchasePrice', 'mechanicPrice', 'stock', 'opBalQty', 'opQty', 'clQty']), 0) > 0;
+    const hasExplicitItemIdentifiers =
+      Boolean(getField(row, ['oemPartNo', 'partNo', 'partNumber', 'hsn', 'hsnCode', 'unitName', 'mainUnit']));
+    const hasExplicitAccountFields =
+      Boolean(getField(row, ['accountGroup', 'gstin', 'gstNo', 'tinNo', 'itpNo', 'pan', 'dealerType', 'typeOfDealer', 'maintainBalBillByBill', 'address1', 'openingType'])) ||
+      parseNum(getField(row, ['creditLimit', 'creditDays', 'opBal', 'openingBal', 'opBalDr', 'opBalCr']), 0) !== 0;
+
+    if (xmlMapped?.domain === 'Master') {
+      subType = xmlMapped.subType;
+    } else if (hasKnownAccountName && !hasPositiveItemPricingOrStock && !hasExplicitItemIdentifiers) {
+      subType = 'Account';
+    } else if (hasKnownAccountGroup && matchedMaster !== 'Item' && !hasPositiveItemPricingOrStock && !hasExplicitItemIdentifiers) {
+      subType = 'Account';
+    } else if (matchedMaster) {
+      subType = matchedMaster;
+    } else if (typeNorm.includes('account') && typeNorm.includes('group')) {
+      subType = 'Account Group';
+    } else if (typeNorm.includes('account') || typeNorm.includes('party') || typeNorm.includes('customer') || typeNorm.includes('supplier') || typeNorm.includes('ledger')) {
+      subType = 'Account';
+    } else if (typeNorm.includes('item') && typeNorm.includes('group')) {
+      subType = 'Item Group';
+    } else if (typeNorm.includes('unit') && typeNorm.includes('conv')) {
+      subType = 'Unit Conversion';
+    } else if (typeNorm.includes('unit')) {
+      subType = 'Unit';
+    } else if (typeNorm.includes('tax')) {
+      subType = 'Tax Category';
+    } else if (typeNorm.includes('sundry')) {
+      subType = 'Bill Sundry';
+    } else if (typeNorm.includes('bom') || typeNorm.includes('material')) {
+      subType = 'Bill of Material';
+    } else if (hasKnownAccountGroup || hasKnownAccountName || (hasExplicitAccountFields && !hasPositiveItemPricingOrStock && !hasExplicitItemIdentifiers)) {
+      subType = 'Account';
+    } else if (hasPositiveItemPricingOrStock || hasExplicitItemIdentifiers || Boolean(getField(row, ['taxCatName']))) {
+      subType = 'Item';
+    } else {
+      subType = rawType && !/^\d+$/.test(rawType) ? rawType : 'Item';
+    }
+
+    // Final safety guard: a record with a known BUSY Account Name or Accounting Group (like Duties & Taxes,
+    // Sundry Debtors, Sundry Creditors, Indirect Expenses, Add. Cess on GST Input/Output) must NEVER be an Item
+    if (
+      subType === 'Item' &&
+      (hasKnownAccountName || hasKnownAccountGroup) &&
+      !hasPositiveItemPricingOrStock &&
+      !getField(row, ['oemPartNo', 'partNo', 'partNumber', 'hsn', 'hsnCode'])
+    ) {
+      subType = 'Account';
+    }
   }
 
   // Extract address parts from BUSY XML (<Address1>, <Address2>, <Address3>, <Address4>, <Station>, <PinCode>)
@@ -452,7 +499,7 @@ function normalizeRawBusyRow(row = {}, sourceFile = '', rowIndex = 1) {
     openingBalance = opBalCr;
     openingType = 'Cr';
   } else if (!openingType) {
-    const grpLower = String(getField(row, ['accountGroup', 'parentGroup', 'groupName', 'group']) || '').toLowerCase();
+    const grpLower = accountGroupVal.toLowerCase();
     if (rawOpBal < 0 || grpLower.includes('creditor') || grpLower.includes('supplier') || grpLower.includes('liability') || grpLower.includes('payable')) {
       openingType = 'Cr';
     } else {
@@ -463,8 +510,15 @@ function normalizeRawBusyRow(row = {}, sourceFile = '', rowIndex = 1) {
   const rawTaxField = getField(row, ['taxPercent', 'gstRate', 'taxRate', 'taxCatName', 'taxCategory', 'gstPercent']);
   const taxPercent = parseTaxRateFromText(rawTaxField, 18);
 
-  const codeVal = String(getField(row, ['code', 'itemCode', 'accountCode', 'alias', 'aliasName', 'shortName', 'sku', 'printName']) || '').trim();
-  const oemVal = String(getField(row, ['oemPartNo', 'partNo', 'partNumber', 'oemNo', 'alias', 'code', 'itemCode']) || '').trim();
+  // In BUSY Accounting, the Alias field (<Alias> / Alias column) stores the Spare Part Number.
+  // Always prioritize Alias for oemPartNo when present, followed by explicit partNo fields, then code.
+  const aliasVal = String(getField(row, ['alias', 'itemAlias', 'aliasName', 'masterAlias', 'alias1', 'shortName']) || '').trim();
+  const explicitOemVal = String(getField(row, ['oemPartNo', 'partNo', 'partNumber', 'oemNo']) || '').trim();
+  const rawCodeVal = String(getField(row, ['code', 'itemCode', 'accountCode', 'sku']) || '').trim();
+  const cleanCodeVal = rawCodeVal && rawCodeVal.toLowerCase() !== nameVal.toLowerCase() ? rawCodeVal : '';
+
+  const oemVal = aliasVal || explicitOemVal || cleanCodeVal;
+  const codeVal = aliasVal || cleanCodeVal || explicitOemVal;
 
   return {
     sourceId: `${sourceFile}#${rowIndex}`,
@@ -472,7 +526,8 @@ function normalizeRawBusyRow(row = {}, sourceFile = '', rowIndex = 1) {
     rowIndex,
     domain,
     subType,
-    name: String(getField(row, ['name', 'itemName', 'accountName', 'partyName', 'printName', 'particulars']) || '').trim(),
+    name: nameVal,
+    alias: aliasVal || oemVal,
     code: codeVal,
     oemPartNo: oemVal,
     mfgPartNo: String(getField(row, ['mfgPartNo', 'manufacturerPartNo', 'catNo', 'catalogueNo']) || '').trim(),
@@ -481,7 +536,7 @@ function normalizeRawBusyRow(row = {}, sourceFile = '', rowIndex = 1) {
     brand: String(getField(row, ['brand', 'makeBrand', 'itemGroup', 'groupName', 'parentGroup']) || '').trim(),
     manufacturer: String(getField(row, ['manufacturer', 'mfg', 'brand']) || '').trim(),
     category: String(getField(row, ['category', 'itemGroup', 'productGroup', 'groupName', 'parentGroup', 'group']) || '').trim(),
-    accountGroup: String(getField(row, ['accountGroup', 'parentGroup', 'groupName', 'group']) || '').trim(),
+    accountGroup: accountGroupVal,
     customerType: String(getField(row, ['customerType', 'partyType', 'dealerType']) || 'Retail').trim(),
     hsn: String(getField(row, ['hsn', 'hsnCode', 'hsnCodeMaster', 'hsnSac', 'sac']) || '').trim(),
     gstin: (() => {
@@ -585,6 +640,16 @@ export function reconcileBusyImport({
   const purByNo = new Map((existingPurchases || []).map(p => [String(p.billNumber || p.id || '').trim().toLowerCase(), p]));
 
   for (const rec of records) {
+    // Guard: ensure an Account record is never routed to Item even if custom/raw records are passed in
+    if (
+      rec.domain === 'Master' &&
+      rec.subType === 'Item' &&
+      (KNOWN_ACCOUNT_NAMES_RE.test(rec.name || '') || KNOWN_ACCOUNT_GROUPS_RE.test(rec.accountGroup || '') || KNOWN_ACCOUNT_GROUPS_RE.test(rec.category || '')) &&
+      !(Number(rec.sellingPrice) > 0 || Number(rec.purchasePrice) > 0 || Number(rec.mrp) > 0 || rec.hsn)
+    ) {
+      rec.subType = 'Account';
+    }
+
     if (rec.domain === 'Master') {
       byMasterType[rec.subType] = (byMasterType[rec.subType] || 0) + 1;
     } else {
@@ -629,13 +694,15 @@ export function reconcileBusyImport({
     // 3. Handle Master Records
     if (rec.domain === 'Master') {
       if (rec.subType === 'Item') {
+        const partNumberFromAlias = rec.alias || rec.oemPartNo || rec.code || '';
         const candidateProd = normalizeAutomotiveProduct({
           name: rec.name,
-          itemCode: rec.code || rec.oemPartNo,
-          oemPartNo: rec.oemPartNo,
+          alias: rec.alias || partNumberFromAlias,
+          itemCode: rec.code || partNumberFromAlias,
+          oemPartNo: partNumberFromAlias,
           mfgPartNo: rec.mfgPartNo,
           altPartNo: rec.altPartNo,
-          sku: rec.code,
+          sku: rec.code || partNumberFromAlias,
           barcode: rec.barcode,
           brand: rec.brand,
           manufacturer: rec.manufacturer || rec.brand,
@@ -664,7 +731,8 @@ export function reconcileBusyImport({
         const { exactDuplicates, crossBrandEquivalents } = findDuplicateProducts(candidateProd, workingProducts);
         if (exactDuplicates.length > 0) {
           const existing = exactDuplicates[0].product;
-          if (duplicatePolicy === 'skip') {
+          const needsAliasPartBackfill = !existing.oemPartNo && Boolean(candidateProd.oemPartNo);
+          if (duplicatePolicy === 'skip' && !needsAliasPartBackfill) {
             counts.duplicateCount++;
             analyzedRows.push({
               ...rec,
@@ -672,14 +740,24 @@ export function reconcileBusyImport({
               reason: `${exactDuplicates[0].reason} (Matches existing "${existing.name}") — Skipped`,
             });
             continue;
-          } else if (duplicatePolicy === 'update') {
+          } else if (duplicatePolicy === 'update' || needsAliasPartBackfill) {
             counts.updatedCount++;
-            const updatedProd = { ...existing, ...candidateProd, id: existing.id };
+            const updatedProd = {
+              ...existing,
+              ...candidateProd,
+              id: existing.id,
+              oemPartNo: candidateProd.oemPartNo || existing.oemPartNo || existing.alias || existing.itemCode || '',
+              alias: candidateProd.alias || existing.alias || candidateProd.oemPartNo || '',
+            };
             staged.products.push(updatedProd);
+            const idxInWorking = workingProducts.findIndex(w => w.id === existing.id);
+            if (idxInWorking >= 0) workingProducts[idxInWorking] = updatedProd;
             analyzedRows.push({
               ...rec,
               status: 'Updated',
-              reason: `Updates existing product "${existing.name}" (${exactDuplicates[0].reason})`,
+              reason: needsAliasPartBackfill
+                ? `Updated existing product "${existing.name}" with BUSY Alias Part No (${updatedProd.oemPartNo})`
+                : `Updates existing product "${existing.name}" (${exactDuplicates[0].reason})`,
             });
             continue;
           }
@@ -709,6 +787,7 @@ export function reconcileBusyImport({
         const grp = rec.accountGroup.toLowerCase();
         const isSupplier = grp.includes('creditor') || grp.includes('supplier') || grp.includes('vendor');
         const isLedgerGroup =
+          KNOWN_ACCOUNT_NAMES_RE.test(rec.name || '') ||
           grp.includes('bank') ||
           grp.includes('cash') ||
           grp.includes('expense') ||

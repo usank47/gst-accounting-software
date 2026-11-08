@@ -229,9 +229,56 @@ test('BUSY Accounting: Native XML MSAll.DAT Parser (Accounts + Items with numeri
   assert.equal(recon.counts.newCount, 3);
   assert.equal(recon.byMasterType['Account'], 2);
   assert.equal(recon.byMasterType['Item'], 1);
+  assert.equal(recon.staged.products.length, 1);
+  assert.equal(recon.staged.products[0].oemPartNo, 'HL-RLY-100', 'Should map <Alias> to oemPartNo');
   assert.equal(recon.financialImpact.newProductsStockQty, 25);
   assert.equal(recon.financialImpact.newProductsStockValue, 25 * 310);
   assert.equal(recon.financialImpact.debtorsOpeningDr, 15400);
   assert.equal(recon.financialImpact.creditorsOpeningCr, 28000);
 });
+
+test('BUSY Accounting: Tax/Expense Ledgers (Add. Cess on GST Input/Output) are NEVER imported as Products and Alias takes priority as Part Number', () => {
+  const xmlDat = `<BusyData>
+    <Record>
+      <Name>Add. Cess Adjustable Agnst. Advance</Name>
+      <PrintName>Add. Cess Adjustable Agnst. Advance</PrintName>
+      <ParentGroup>Duties &amp; Taxes</ParentGroup>
+      <SalePrice>0</SalePrice>
+      <MRP>0</MRP>
+    </Record>
+    <Record>
+      <Name>Add. Cess on GST Input</Name>
+      <SalePrice>0</SalePrice>
+    </Record>
+    <Record>
+      <Name>Add. Cess on GST Output</Name>
+      <SalePrice>0</SalePrice>
+    </Record>
+    <Item>
+      <Name>Clutch Release Bearing Swift</Name>
+      <Code>1099</Code>
+      <Alias>23265M79F00</Alias>
+      <ParentGroup>Clutch &amp; Transmission</ParentGroup>
+      <HSNCode>87089300</HSNCode>
+      <SalePrice>890</SalePrice>
+      <PurPrice>620</PurPrice>
+      <OpBalQty>10</OpBalQty>
+    </Item>
+  </BusyData>`;
+
+  const records = parseBusyFileRecords('20261103_MSAll.DAT', xmlDat);
+  assert.equal(records.length, 4);
+  assert.equal(records[0].subType, 'Account', 'Add. Cess Adjustable Agnst. Advance must be Account');
+  assert.equal(records[1].subType, 'Account', 'Add. Cess on GST Input must be Account');
+  assert.equal(records[2].subType, 'Account', 'Add. Cess on GST Output must be Account');
+  assert.equal(records[3].subType, 'Item', 'Clutch Release Bearing Swift must be Item');
+  assert.equal(records[3].oemPartNo, '23265M79F00', 'Alias must take #1 priority over numeric Code for oemPartNo');
+
+  const recon = reconcileBusyImport({ records });
+  assert.equal(recon.staged.products.length, 1, 'Only the 1 real item must be staged in products');
+  assert.equal(recon.staged.products[0].name, 'Clutch Release Bearing Swift');
+  assert.equal(recon.staged.products[0].oemPartNo, '23265M79F00');
+  assert.equal(recon.staged.ledgers.length, 3, 'All 3 Add. Cess accounts must be staged in ledgers');
+});
+
 
